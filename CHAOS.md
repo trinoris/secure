@@ -42,6 +42,25 @@ Full design, including exactly what the automated reviewer checks and its
 honestly-documented limits, in
 [specs/chaotests/03-orchestrator.md](specs/chaotests/03-orchestrator.md).
 
+### What actually gates each workflow, precisely
+
+Two independent mechanisms are being compared here, not one — worth
+splitting apart, since it's easy to conflate "review workflow" with
+"protection":
+
+| | Push-time signing gate (the hook) | Content review at promotion | `verify`'s own check |
+|---|---|---|---|
+| **W1** (direct-master) | ❌ none | ❌ none (no promotion step exists) | runs, but a no-op (nobody's registered as a signer under W1) |
+| **W2** (working-branch) | ✅ yes, every ref | ✅ only at promotion (`working` → `master`) | runs, and actually enforces (signers registered) |
+| **W3** (pr-gated) | ✅ yes, every ref | ✅ at every merge, per branch, finer-grained | runs, and actually enforces |
+| **W4** (proposed, not built) | ✅ yes, on `master` itself | ❌ none — no promotion step, same as W1 | would enforce |
+
+Signing is an *identity* check — is this commit from someone already
+trusted with this repository's secrets — enforced independently of
+whichever review workflow (or lack of one) a team runs on top of it. W4
+exists to isolate that question on its own: does signing alone stop an
+attacker with zero review process at all? Not built yet.
+
 ## What real runs actually found
 
 Not a projection — this is what happened, repeatedly, on real GitHub
@@ -54,14 +73,20 @@ Actions infrastructure:
   recipients) or simply had no shared state to poison in the first place
   — each collaborator's branch is independent, so an attack against one
   never reaches another's.
-- **W1 (direct push) and W2 (shared working branch): a real plaintext
-  leak in every single real run**, ranging from a handful of violations to
-  well over a hundred depending on how long the run went and how the
-  attacker's random timing landed — the exact count isn't the point, the
-  100% failure rate is. A gated *promotion* to `master` (W2) still isn't
-  enough on its own: the shared branch everyone reads and writes is
-  already visible to anyone with ordinary read access to the remote, the
+- **W1 (direct push): a real plaintext leak in every single real run**,
+  ranging from a handful of violations to well over a hundred depending on
+  how long the run went and how the attacker's random timing landed — the
+  exact count isn't the point, the 100% failure rate is.
+- **W2 (shared working branch) leaked the same way, for the same reason,
+  until commit signing closed it.** A gated *promotion* to `master` was
+  never enough on its own: the shared branch everyone reads and writes is
+  already visible to anyone with ordinary read access to the remote the
   moment anything lands on it — long before a promotion review ever runs.
+  Once every push (not just the promotion) requires a signature from a
+  registered recipient, that gap closes: a real run watched the attacker's
+  own attribute-downgrade attempt get refused directly at `working` itself,
+  finishing with zero plaintext violations. W1 still leaks — signing isn't
+  enabled there (see the table above and W4).
 - The live comparison — the actual current numbers, not last session's —
   is published every night: see "Watch it live" below.
 
