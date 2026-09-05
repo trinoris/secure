@@ -64,7 +64,9 @@ attacker with zero review process at all? Not built yet.
 ## What real runs actually found
 
 Not a projection — this is what happened, repeatedly, on real GitHub
-Actions infrastructure:
+Actions infrastructure (the W1/W2/W3 baseline below), plus one finding so
+far confirmed only locally, called out precisely as such rather than
+folded into the same claim:
 
 - **W3 (pull-request-gated): `noPlaintextLeaked` and `repositoryIntact`
   held clean in every single real run.** The attacker's downgrade/rollback/
@@ -77,16 +79,23 @@ Actions infrastructure:
   ranging from a handful of violations to well over a hundred depending on
   how long the run went and how the attacker's random timing landed — the
   exact count isn't the point, the 100% failure rate is.
-- **W2 (shared working branch) leaked the same way, for the same reason,
-  until commit signing closed it.** A gated *promotion* to `master` was
-  never enough on its own: the shared branch everyone reads and writes is
-  already visible to anyone with ordinary read access to the remote the
-  moment anything lands on it — long before a promotion review ever runs.
-  Once every push (not just the promotion) requires a signature from a
-  registered recipient, that gap closes: a real run watched the attacker's
-  own attribute-downgrade attempt get refused directly at `working` itself,
-  finishing with zero plaintext violations. W1 still leaks — signing isn't
-  enabled there (see the table above and W4).
+- **W2 (shared working branch) leaked the same way, for the same reason —
+  a real GitHub Actions run measured 150 violations on one occasion.** A
+  gated *promotion* to `master` was never enough on its own: the shared
+  branch everyone reads and writes is already visible to anyone with
+  ordinary read access to the remote the moment anything lands on it —
+  long before a promotion review ever runs.
+- **Since then, locally (not yet re-confirmed on GitHub Actions): commit
+  signing closes that gap.** Once every push — not just the promotion —
+  requires a signature from a registered recipient, a local Docker run
+  watched the attacker's own attribute-downgrade attempt get refused
+  directly at `working` itself, finishing with zero plaintext violations.
+  Flagged as local-only deliberately: the fix is built and the mechanism
+  is understood, but "confirmed on real GitHub Actions infrastructure" is
+  a claim earned by actually running there, not assumed from a local pass
+  — the next scheduled or dispatched `chaos` job run is what would earn
+  it. W1 still leaks either way — signing isn't enabled there (see the
+  table above and W4).
 - The live comparison — the actual current numbers, not last session's —
   is published every night: see "Watch it live" below.
 

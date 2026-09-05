@@ -6,11 +6,16 @@ remote repo, three legitimate actors (`collaborator-a`, `collaborator-b`,
 `chaos-6-infra`), and a `verifier` that audits the result.
 
 **Update: since verified end-to-end via GitHub Actions' `chaos` job**,
-running real `docker compose` (not WSL, where it still isn't available in
+running real `docker compose` (not WSL, where it still wasn't available in
 the environment this file was originally written in) — see
 [chaotests/01-sandbox.md](../specs/chaotests/01-sandbox.md)'s "Later
-correction" note. Local `docker compose` runs from WSL remain untested;
-see "Troubleshooting" below if that's where you're running this.
+correction" note. **Further update: local `docker compose` from WSL now
+works too** (confirmed directly — Docker Desktop's WSL integration, not
+the native Linux `docker.io` package this file originally meant), and was
+in fact how the commit-signing pre-receive hook (specs/chaotests/03-orchestrator.md's
+"Since then" note) got its own real-run confirmation, several times over,
+before that work was ever pushed. See "Troubleshooting" below only if
+your own WSL setup hits something these runs didn't.
 
 ## Running it
 

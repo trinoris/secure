@@ -169,9 +169,10 @@ run, not by inspection:**
   with a `reason` starting `push failed:` is this hook working, not the
   attack declining to run.
 
-**Confirmed by a real chaos run, watched live, not inferred:** with the
-fixes above, a genuine `attackT1_attributeDowngrade` attempt was directly
-observed being refused —
+**Confirmed by a real chaos run, watched live, not inferred — but a local
+Docker run, not yet the GitHub Actions `chaos` job specifically.** With
+the fixes above, a genuine `attackT1_attributeDowngrade` attempt was
+directly observed being refused —
 `remote: refusing push to refs/heads/working — commit b32f2ed0 is not
 signed` — and the full run finished with `noPlaintextLeaked: HELD` (0
 violations). Re-verified against W1 (direct-master) and W3 (pr-gated) for
@@ -179,7 +180,13 @@ regressions: W3 still holds all three invariants; W1 shows its same
 small, bounded violation count (2, this run) from the operator's periodic
 reconcile pass — both unchanged from before this feature, since
 `SIGNING_ENABLED` is deliberately `false` under direct-master (its hook
-stays a no-op, matching remote/entrypoint.mjs's existing behavior).
+stays a no-op, matching remote/entrypoint.mjs's existing behavior). Every
+run this section describes was `docker compose` on this machine, built
+from the exact same `chaos/Dockerfile` the real workflow uses — the same
+mechanism, but "confirmed on GitHub Actions infrastructure" (the standard
+this document holds its *other* findings to, each with a real run ID) is
+still owed to the next scheduled or dispatched `chaos` job, not yet
+claimed here.
 
 ## Core Principle
 
@@ -563,7 +570,7 @@ Restated from [01](01-sandbox.md)'s own guardrails, extended for this spec:
 | Commit signing: a legitimate collaborator's properly-signed commit is unaffected, accepted as before | `chaos/actors/driver.mjs`'s `allCommitsSignedByRecipient()` | ✅ built, confirmed by the same local plumbing test, and indirectly by every real run's own successful merges (collaborator-a/b's `commit.gpgsign=true` commits are signed and land normally) |
 | W3: chaos-5 pushing straight to `master` is refused by the `pre-receive` hook, never reaches the orchestrator | `remote/entrypoint.mjs`'s hook + `attacker.mjs`'s `attackDirectMasterBypass` | ✅ (local repro + real runs: every `direct-master-bypass` attempt logged `rejected: true`) |
 | W3: the merge-review step evaluates against `master`'s pre-merge state, not the branch's own edited `.gitattributes` (the same-push downgrade-plus-plaintext attack) | `chaos/actors/driver.mjs`'s `reviewAndMaybeMerge()` (always `checkout -B review origin/BRANCH` fresh) | ✅ (local repro) |
-| W2: `working` accumulates chaos-5's attacks like W1 — confirmed, and worse than originally predicted: a shared branch is *not* a quarantined staging area, since anyone with ordinary read access to the remote can already see it (see the corrected mechanism above) | full sandbox runs, `SANDBOX_WORKFLOW=working-branch` | Was ✅ real violations every run, before commit signing; promotion-to-`master` review itself also confirmed working (rejects resumed correctly once a hostile recipient landed on `working`). **Since the signing hook: closed.** A real run watched a genuine `attackT1_attributeDowngrade` push refused directly at `working` itself (`pre-receive-check.mjs`), full run finishing `noPlaintextLeaked: HELD`, 0 violations — see this document's own "Since then" note. |
+| W2: `working` accumulates chaos-5's attacks like W1 — confirmed, and worse than originally predicted: a shared branch is *not* a quarantined staging area, since anyone with ordinary read access to the remote can already see it (see the corrected mechanism above) | full sandbox runs, `SANDBOX_WORKFLOW=working-branch` | Was ✅ real *GitHub Actions* runs, every one, before commit signing; promotion-to-`master` review itself also confirmed working (rejects resumed correctly once a hostile recipient landed on `working`). **Since the signing hook: closed, confirmed locally, not yet re-run on GitHub Actions.** A local Docker run watched a genuine `attackT1_attributeDowngrade` push refused directly at `working` itself (`pre-receive-check.mjs`), full run finishing `noPlaintextLeaked: HELD`, 0 violations — see this document's own "Since then" note. |
 | A full real run under each of the three `SANDBOX_WORKFLOW` modes, verifier results compared against the "Predicted plaintext-leak shape" table above | GitHub Actions `chaos` job (matrix), `chaos-publish` job, `chaos/viewer/index.html`'s comparison panel | ✅ four real runs, three real bugs found and fixed along the way |
 
 ## Open Questions before implementation starts
