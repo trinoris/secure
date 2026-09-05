@@ -36,11 +36,15 @@ const HOME = process.env.HOME;
 const WORKFLOW = process.env.SANDBOX_WORKFLOW ?? 'direct-master';
 // Registering collaborator-a/b as signing recipients (chaos-5 deliberately
 // excluded) only matters where something actually checks a signature —
-// direct-master's pre-receive hook is an unconditional no-op
-// (remote/entrypoint.mjs), so there's nothing there for signing to harden,
-// and enabling it anyway would just make every ordinary commit fail
-// `verify`'s own commit-signed-by-recipient check for no protective
-// benefit. See 03-orchestrator.md's "Since then" note for why this exists.
+// plain direct-master's pre-receive hook is an unconditional no-op
+// (remote/entrypoint.mjs), so there's nothing there for signing to
+// harden, and enabling it anyway would just make every ordinary commit
+// fail `verify`'s own commit-signed-by-recipient check for no protective
+// benefit. `direct-master-signed` (W4) is the deliberate exception — same
+// no-promotion-step shape as direct-master, but with signing enforced
+// directly on `master`, to isolate whether signing alone stops an
+// attacker with zero review process at all. See 03-orchestrator.md's
+// "Since then" note for why this exists.
 const SIGNING_ENABLED = WORKFLOW !== 'direct-master';
 const SHARED_IDENTITY = (role) => join(SHARED_DIR, `identity-${role}.json`);
 // Only set (and only meaningful) for the operator under working-branch/
@@ -54,8 +58,10 @@ const GITATTRIBUTES_PATH = join(WORK_DIR, '.gitattributes');
 
 /**
  * Where a non-orchestrator role's own edits land. Under `direct-master`
- * this *is* `BRANCH` (today's only behaviour, unchanged); under the other
- * two, `master` never accepts a direct update at all
+ * and `direct-master-signed` (W4 — same shape, no promotion step, no
+ * orchestrator review; W4 additionally requires every commit signed by a
+ * registered recipient, enforced at push time) this *is* `BRANCH`; under
+ * the other two, `master` never accepts a direct update at all
  * (chaos/remote/entrypoint.mjs's pre-receive hook) — every push instead
  * targets a branch the orchestrator later reviews. `working-branch` (W2)
  * shares one ref between both collaborators (and chaos-5); `pr-gated`
@@ -65,7 +71,7 @@ const GITATTRIBUTES_PATH = join(WORK_DIR, '.gitattributes');
  * contributing.
  */
 function targetRef() {
-  if (WORKFLOW === 'direct-master') return BRANCH;
+  if (WORKFLOW === 'direct-master' || WORKFLOW === 'direct-master-signed') return BRANCH;
   if (WORKFLOW === 'working-branch') return 'working';
   return `feature/${ROLE}`;
 }
@@ -190,6 +196,33 @@ async function registerSigningRecipients() {
   await git(['add', '.securegit/recipients'], { cwd: WORK_DIR, env: gitEnv() });
   const commit = await git(['commit', '-m', 'bootstrap: register collaborator-a and collaborator-b as signing recipients'], { cwd: WORK_DIR, env: gitEnv() });
   await record('action', 'commit signing recipients', commit);
+  // W4 (direct-master-signed) accepts ordinary pushes to BRANCH — a
+  // regular `git push` lands this fine (recipientCount is still 0 at the
+  // instant this exact commit is evaluated, so the no-op tier passes it
+  // regardless of signing, same as every other workflow's first-ever
+  // registration commit). W2/W3 refuse any BRANCH update outright, so
+  // this needs the same privileged path the orchestrator's own merges use.
+  if (WORKFLOW === 'direct-master-signed') {
+    // Unlike every other landing in this file, this one has no later
+    // round to retry it — collaborator-a/b are pushing their own ordinary
+    // round commits to the exact same ref concurrently the whole time, so
+    // a bare push losing a single non-fast-forward race (confirmed
+    // directly: "! [rejected] main -> main (fetch first)") would silently
+    // leave signing forever unregistered for the rest of the run, not
+    // just delayed. Retry with a fresh pull-and-reapply a few times
+    // rather than accept a one-shot race.
+    let push = { code: 1 };
+    for (let attempt = 1; attempt <= 5 && push.code !== 0; attempt += 1) {
+      push = await git(['push', 'origin', BRANCH], { cwd: WORK_DIR, env: gitEnv() });
+      if (push.code !== 0 && attempt < 5) {
+        await sleep(jitter(500, 1500));
+        await git(['fetch', 'origin', BRANCH], { cwd: WORK_DIR, env: gitEnv() });
+        await git(['rebase', `origin/${BRANCH}`], { cwd: WORK_DIR, env: gitEnv() });
+      }
+    }
+    await record('observation', 'pushed signing recipients onto BRANCH', push);
+    return;
+  }
   const newSha = (await git(['rev-parse', 'HEAD'], { cwd: WORK_DIR })).stdout.trim();
   const landed = await landReviewedMerge(newSha, expectedOld);
   await record('observation', 'landed signing recipients onto BRANCH', landed);
@@ -860,7 +893,7 @@ async function main() {
     round += 1;
     try {
       if (ROLE === 'operator') {
-        if (WORKFLOW === 'direct-master') {
+        if (WORKFLOW === 'direct-master' || WORKFLOW === 'direct-master-signed') {
           await operatorRound(round);
         } else {
           await orchestratorReviewRound(round);

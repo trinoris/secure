@@ -1,18 +1,21 @@
 #!/usr/bin/env node
-// The full `pre-receive` hook for working-branch/pr-gated
-// (specs/chaotests/03-orchestrator.md, "Enforcing 'only the orchestrator
-// writes master'" and its signing-check extension). Two independent
-// checks, both unconditional for every network pusher — there is still no
-// pusher *identity* here (git:// has none to check), only ref names and
-// the commits' own embedded signatures:
+// The full `pre-receive` hook for every SANDBOX_WORKFLOW except plain
+// `direct-master` (specs/chaotests/03-orchestrator.md, "Enforcing 'only
+// the orchestrator writes master'" and its signing-check extension). Two
+// independent checks, both unconditional for every network pusher — there
+// is still no pusher *identity* here (git:// has none to check), only ref
+// names and the commits' own embedded signatures:
 //
-//   1. Refuse any *update* (not creation) of the protected branch,
-//      always — unchanged from the original hook. The orchestrator lands
-//      its own reviewed merges through a different, privileged
-//      filesystem path (`update-ref`, driver.mjs's landReviewedMerge())
-//      that never invokes receive-pack and so never runs this hook at
-//      all.
-//   2. NEW: for every *other* ref (working, feature/*) — left completely
+//   1. For working-branch/pr-gated: refuse any *update* (not creation) of
+//      the protected branch, always — unchanged from the original hook.
+//      The orchestrator lands its own reviewed merges through a
+//      different, privileged filesystem path (`update-ref`, driver.mjs's
+//      landReviewedMerge()) that never invokes receive-pack and so never
+//      runs this hook at all. `direct-master-signed` (W4) deliberately
+//      does *not* apply this rule at all — see
+//      REFUSES_PROTECTED_REF_OUTRIGHT below.
+//   2. NEW: for every ref this workflow doesn't outright refuse (working,
+//      feature/*, and under W4, `master` itself) — left completely
 //      unchecked by the original hook, which is exactly the gap that let
 //      chaos-5's T1 attribute-downgrade attack sit on `working`,
 //      unsigned and undetected, for the rest of a run (see that spec's
@@ -126,14 +129,21 @@ function newCommits(oldSha, newSha) {
   }
 }
 
+// W4 (direct-master-signed) deliberately does *not* refuse updates to
+// PROTECTED_REF at all — it isolates whether signing alone, with no
+// promotion step and no orchestrator, is enough on its own. Every other
+// signing-enabled workflow (working-branch, pr-gated) still refuses any
+// direct update to PROTECTED_REF unconditionally, exactly as before.
+const REFUSES_PROTECTED_REF_OUTRIGHT = SANDBOX_WORKFLOW !== 'direct-master-signed';
+
 const lines = readFileSync(0, 'utf8').trim().split('\n').filter(Boolean);
 let status = 0;
-let signingTier = null; // computed lazily, once, only if a non-protected ref actually needs it
+let signingTier = null; // computed lazily, once, only if some ref actually needs it
 
 for (const line of lines) {
   const [oldSha, newSha, ref] = line.split(' ');
 
-  if (ref === PROTECTED_REF) {
+  if (ref === PROTECTED_REF && REFUSES_PROTECTED_REF_OUTRIGHT) {
     if (oldSha !== ZERO_SHA) {
       console.error(
         `remote: refusing direct push to ${PROTECTED_REF} — this workflow (${SANDBOX_WORKFLOW}) only accepts reviewed merges`,

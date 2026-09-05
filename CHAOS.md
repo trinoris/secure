@@ -53,13 +53,16 @@ splitting apart, since it's easy to conflate "review workflow" with
 | **W1** (direct-master) | ❌ none | ❌ none (no promotion step exists) | runs, but a no-op (nobody's registered as a signer under W1) |
 | **W2** (working-branch) | ✅ yes, every ref | ✅ only at promotion (`working` → `master`) | runs, and actually enforces (signers registered) |
 | **W3** (pr-gated) | ✅ yes, every ref | ✅ at every merge, per branch, finer-grained | runs, and actually enforces |
-| **W4** (proposed, not built) | ✅ yes, on `master` itself | ❌ none — no promotion step, same as W1 | would enforce |
+| **W4** (`direct-master-signed`) | ✅ yes, on `master` itself | ❌ none — no promotion step, same as W1 | enforces (signers registered) |
 
 Signing is an *identity* check — is this commit from someone already
 trusted with this repository's secrets — enforced independently of
 whichever review workflow (or lack of one) a team runs on top of it. W4
-exists to isolate that question on its own: does signing alone stop an
-attacker with zero review process at all? Not built yet.
+isolates that question on its own: does signing alone stop an attacker
+with zero review process at all? **Confirmed locally: yes** — a real run
+watched all of the attacker's attempts refused directly on `master`
+itself, finishing with zero plaintext violations. Try it:
+`SANDBOX_WORKFLOW=direct-master-signed npm run chaos:sandbox`.
 
 ## What real runs actually found
 
@@ -121,6 +124,7 @@ Runs `direct-master` by default. Compare a different workflow:
 ```sh
 SANDBOX_WORKFLOW=working-branch npm run chaos:sandbox
 SANDBOX_WORKFLOW=pr-gated npm run chaos:sandbox
+SANDBOX_WORKFLOW=direct-master-signed npm run chaos:sandbox   # W4
 ```
 
 See [chaos/README.md](chaos/README.md) for prerequisites, the exact

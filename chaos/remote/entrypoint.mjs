@@ -24,6 +24,14 @@
 // writes master'" for the real-world server-side equivalents (self-hosted
 // `pre-receive`, or github.com's required status checks) and its honest
 // limits.
+//
+// SANDBOX_WORKFLOW=direct-master-signed (W4) installs the same
+// pre-receive-check.mjs, but tells it (still via this same env var) not
+// to unconditionally refuse `refs/heads/<BRANCH>` at all — direct pushes
+// to `master` are allowed exactly like plain `direct-master`, the only
+// difference is *every* ref, `master` included, is signing-checked once
+// adopted. This isolates whether signing alone, with zero review
+// workflow, is enough to stop an attacker who was never a recipient.
 
 import { existsSync, writeFileSync, chmodSync } from 'node:fs';
 import { spawn, execFileSync } from 'node:child_process';
@@ -53,7 +61,13 @@ if (SANDBOX_WORKFLOW === 'direct-master') {
   writeFileSync(hookPath, '#!/bin/sh\nexec node /chaos/remote/pre-receive-check.mjs\n');
 }
 chmodSync(hookPath, 0o755);
-process.stdout.write(`[remote] SANDBOX_WORKFLOW=${SANDBOX_WORKFLOW}, pre-receive hook ${SANDBOX_WORKFLOW === 'direct-master' ? 'is a no-op' : `protects ${PROTECTED_REF}`}\n`);
+const hookDescription =
+  SANDBOX_WORKFLOW === 'direct-master'
+    ? 'is a no-op'
+    : SANDBOX_WORKFLOW === 'direct-master-signed'
+      ? `enforces signing on every ref including ${PROTECTED_REF}, refuses nothing outright`
+      : `protects ${PROTECTED_REF} outright, enforces signing on every other ref`;
+process.stdout.write(`[remote] SANDBOX_WORKFLOW=${SANDBOX_WORKFLOW}, pre-receive hook ${hookDescription}\n`);
 
 process.stdout.write(`[remote] serving ${REPO_PATH} on :9418\n`);
 

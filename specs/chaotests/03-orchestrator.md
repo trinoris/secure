@@ -207,11 +207,67 @@ claimed here.
 | W1 | Direct push to `master` | No review, no CI gate — small teams, early-stage repos, personal projects, or any self-hosted `git` server nobody has configured protection on | Anyone with push access, unconditionally | [01](01-sandbox.md) (today's default, unchanged by this spec) |
 | W2 | Direct push to a shared working branch, gated promotion to `master` | GitFlow's `develop`, a team's `staging`/`integration` branch — fast, low-ceremony collaboration on the working branch, a reviewed release/promotion step onto `master` | Anyone, on the working branch; only the promotion step, on `master` | This spec, §"Workflow W2" |
 | W3 | Pull request against a protected `master`, required status checks | GitHub/GitLab/Bitbucket's standard model: `git push origin feature/x`, open a PR, checks run, a human or a required check approves, *then* it merges — this repository's own `master` is set up exactly this way (`.github/workflows/{codeql,gitleaks}.yml` as required checks) | Only the merge action itself, never a direct push | This spec, §"Workflow W3" |
+| W4 | Direct push to `master`, no review workflow at all, but every push signature-checked | A self-hosted server with branch protection rules that require signed, recipient-registered commits but no PR/review requirement — GitHub's own "require signed commits" is independent of "require PR reviews", so this is a real, standalone configuration some teams run, not a hybrid this spec invented | Anyone with push access, but only if their commit is signed by a registered recipient | This spec, §"Workflow W4" |
 
 W1 is already fully built and already empirically measured (the 28-
 violation run cited above). This spec's job for W1 is precise naming, not
 new work — see [01](01-sandbox.md) and [16](../securegit/16-adversarial-integrity.md)
 for everything about it.
+
+### Workflow W4 — signing alone, no review workflow (✅ built, confirmed live)
+
+W1 and W2's shared root cause (T1's downgrade landing on a shared branch
+before any review can run) and the pre-receive signing hook that closed it
+for W2 together raise an obvious question W2/W3 alone don't answer:
+**does signing enforcement need a review workflow underneath it at all, or
+does it stand on its own?** `SANDBOX_WORKFLOW=direct-master-signed`
+isolates exactly that — same shape as `direct-master` (no promotion step,
+no orchestrator, collaborators push straight to `master`), but
+`pre-receive-check.mjs` applies its signing check to `master` itself
+instead of refusing every update to it outright.
+
+Three real bugs found building this, none of them about the signing
+mechanism itself (already proven correct by W2/W3) — all about wiring it
+into a shape the hook had never run against before:
+
+- `chaos/agents/attacker.mjs` computes its own `TARGET_REF` independently
+  of `driver.mjs`, and its ternary had no branch for the new workflow
+  value — chaos-5 kept pushing to `feature/chaos-5-attacker` (the
+  pr-gated shape) instead of `master` directly, silently testing the
+  wrong ref entirely. Fixed by extending the same condition
+  `driver.mjs`'s own `targetRef()` already uses.
+- `registerSigningRecipients()`'s W4 landing path is a bare `git push
+  origin BRANCH` (no privileged path needed — `master` accepts ordinary
+  pushes under W4) — but with collaborator-a/b *also* pushing their own
+  round commits to that identical ref concurrently from the first moment
+  the run starts, the very first real run lost that race
+  ("`! [rejected] main -> main (fetch first)`") with no later round ever
+  retrying it, permanently leaving signing unregistered — every
+  subsequent chaos-5 attack for the rest of that run went through
+  unopposed. Fixed with a bounded fetch-rebase-retry loop, the one
+  landing path in this file that actually needed it (every other landing
+  either has no ref-sharing racer, or gets retried naturally next round).
+- The verifier's `checkHostileRecipients()` (`chaos/verifier/verify.mjs`)
+  predates commit signing entirely — it just counts every file under
+  `.securegit/recipients/`, an assumption that held exactly as long as
+  *nobody* legitimate ever added one. Once collaborator-a/b became real
+  registered recipients, a perfectly clean run started reporting "2
+  hostile recipient files" — confirmed directly against a run where
+  chaos-5's own log showed all 16 attack attempts refused, zero landed.
+  Fixed by filtering out the two labels (`collaborator-a`,
+  `collaborator-b`) this sandbox ever legitimately creates — this also
+  silently affected every prior W2/W3 confirmation in this document,
+  re-verified clean (`hostile recipient files on remote: 0`) after the fix.
+
+**Confirmed by a real local chaos run** (not yet the GitHub Actions job —
+see the note on that distinction elsewhere in this document): all 16 of
+chaos-5's attack attempts refused (`refusing push to refs/heads/main —
+commit ... is not signed`), `noPlaintextLeaked: HELD` with 0 violations,
+`hostile recipient files on remote: 0`, 0 script-level errors, every
+collaborator/operator round completed. Signing alone, with zero review
+process, fully stops an attacker who was never a recipient — the review
+workflow (W1 vs. W2 vs. W3) and the signing gate are genuinely
+independent axes, not one dimension.
 
 ## Where a "merge request role" is even possible
 

@@ -132,9 +132,31 @@ async function checkAttributeState() {
   return { present: true, containsFilter: res.stdout.includes('filter=securegit') };
 }
 
+// The only two recipients this sandbox ever legitimately creates
+// (chaos/actors/driver.mjs's registerSigningRecipients(), `--label
+// ${role}`) — added once commit signing entered the sandbox
+// (specs/chaotests/03-orchestrator.md's "Since then" note). Before that,
+// *any* file under `.securegit/recipients/` was hostile by construction,
+// since nobody legitimate ever added one; that assumption broke the
+// moment this sandbox started registering real recipients of its own,
+// which is exactly what this filter restores.
+const LEGITIMATE_RECIPIENT_LABELS = new Set(['collaborator-a', 'collaborator-b']);
+
 async function checkHostileRecipients() {
   const paths = await pathsUnder(BRANCH, '.securegit/recipients');
-  return { count: paths.length, paths };
+  const hostile = [];
+  for (const path of paths) {
+    const res = await git(['show', `${BRANCH}:${path}`], { cwd: WORK_DIR });
+    let label;
+    try {
+      label = JSON.parse(res.stdout).label;
+    } catch {
+      // Unparseable — can't confirm it's one of the two legitimate
+      // recipients, so it doesn't get the benefit of the doubt.
+    }
+    if (!LEGITIMATE_RECIPIENT_LABELS.has(label)) hostile.push(path);
+  }
+  return { count: hostile.length, paths: hostile };
 }
 
 async function checkRelocatedFiles() {
