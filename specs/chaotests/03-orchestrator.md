@@ -225,18 +225,30 @@ independently of the protected branch until something explicit accepts it.
   automated — does its job. This is the workflow the orchestrator is a
   merge-request reviewer *for*, in the ordinary sense of that phrase.
 - **W2 is split.** The working branch itself has W1's problem (anyone can
-  push anything, no gate) — the orchestrator has nothing to review there,
-  same reasoning as W1. But the working-branch-to-`master` *promotion* is
-  structurally identical to W3's merge step: a proposed ref (`working`'s
-  current tip), a protected target (`master`), and a gap the orchestrator
-  reviews before crossing it. So the orchestrator plays the merge-request
-  role for W2 too, just narrower in scope — it only ever gates one ref
-  transition, never the working branch's own day-to-day traffic.
+  push anything, no *content* review) — the orchestrator has nothing to
+  review there, same reasoning as W1. But the working-branch-to-`master`
+  *promotion* is structurally identical to W3's merge step: a proposed ref
+  (`working`'s current tip), a protected target (`master`), and a gap the
+  orchestrator reviews before crossing it. So the orchestrator plays the
+  merge-request role for W2 too, just narrower in scope — it only ever
+  gates one ref transition, never the working branch's own day-to-day
+  traffic.
+
+  **Since then, "no gate" narrowed to "no *content* gate":** once commit
+  signing is adopted, `pre-receive-check.mjs` refuses a push to `working`
+  itself if it contains an unsigned or unregistered-signer commit — a
+  real, push-time gate, just an identity one, not a review one. It
+  doesn't change this section's own point (the orchestrator, specifically,
+  still never reviews `working`'s day-to-day traffic) — it closes a
+  different gap this document's own real chaos runs exposed: a T1 attack
+  landing on `working` was never something *any* mechanism caught before
+  promotion, identity or content.
 
 So: **the orchestrator is a merge-request reviewer for the `→ master`
 transition, full stop.** W3 is that transition happening on every single
-change; W2 is that transition happening once per promotion, with an
-ungated free-for-all upstream of it; W1 doesn't have the transition at all.
+change; W2 is that transition happening once per promotion, with a
+content-review-free (but, since the signing hook, not identity-free)
+stretch upstream of it; W1 doesn't have the transition at all.
 
 ## The orchestrator's review, precisely
 
@@ -551,7 +563,7 @@ Restated from [01](01-sandbox.md)'s own guardrails, extended for this spec:
 | Commit signing: a legitimate collaborator's properly-signed commit is unaffected, accepted as before | `chaos/actors/driver.mjs`'s `allCommitsSignedByRecipient()` | ✅ built, confirmed by the same local plumbing test, and indirectly by every real run's own successful merges (collaborator-a/b's `commit.gpgsign=true` commits are signed and land normally) |
 | W3: chaos-5 pushing straight to `master` is refused by the `pre-receive` hook, never reaches the orchestrator | `remote/entrypoint.mjs`'s hook + `attacker.mjs`'s `attackDirectMasterBypass` | ✅ (local repro + real runs: every `direct-master-bypass` attempt logged `rejected: true`) |
 | W3: the merge-review step evaluates against `master`'s pre-merge state, not the branch's own edited `.gitattributes` (the same-push downgrade-plus-plaintext attack) | `chaos/actors/driver.mjs`'s `reviewAndMaybeMerge()` (always `checkout -B review origin/BRANCH` fresh) | ✅ (local repro) |
-| W2: `working` accumulates chaos-5's attacks like W1 — confirmed, and worse than originally predicted: a shared branch is *not* a quarantined staging area, since anyone with ordinary read access to the remote can already see it (see the corrected mechanism above) | full sandbox runs, `SANDBOX_WORKFLOW=working-branch` | ✅ real violations every run; promotion-to-`master` review itself also confirmed working (rejects resumed correctly once a hostile recipient landed on `working`) |
+| W2: `working` accumulates chaos-5's attacks like W1 — confirmed, and worse than originally predicted: a shared branch is *not* a quarantined staging area, since anyone with ordinary read access to the remote can already see it (see the corrected mechanism above) | full sandbox runs, `SANDBOX_WORKFLOW=working-branch` | Was ✅ real violations every run, before commit signing; promotion-to-`master` review itself also confirmed working (rejects resumed correctly once a hostile recipient landed on `working`). **Since the signing hook: closed.** A real run watched a genuine `attackT1_attributeDowngrade` push refused directly at `working` itself (`pre-receive-check.mjs`), full run finishing `noPlaintextLeaked: HELD`, 0 violations — see this document's own "Since then" note. |
 | A full real run under each of the three `SANDBOX_WORKFLOW` modes, verifier results compared against the "Predicted plaintext-leak shape" table above | GitHub Actions `chaos` job (matrix), `chaos-publish` job, `chaos/viewer/index.html`'s comparison panel | ✅ four real runs, three real bugs found and fixed along the way |
 
 ## Open Questions before implementation starts
