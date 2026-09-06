@@ -620,7 +620,7 @@ check.
 | `verify`'s signing check never evaluates history predating adoption (base form, not `--history`) | `src/verify.test.ts` | — | ✅ |
 | Fingerprint comparison in the signing check is constant-time, not a raw `===` | `src/package.test.ts` (repo-wide static check), `src/verify.test.ts` | — | ✅ |
 | `accessReport()` computes a recipient's `signingFingerprint`, `null` when absent or malformed | `src/verify.test.ts` | — | ✅ |
-| Orchestrator: every commit unique to a proposed ref must be signed by a recipient, checked against the base tip's own recipient list, not the merge result's | `chaos/actors/driver.mjs`, `chaos/remote/pre-receive-check.mjs` | — | ✅ built, confirmed by a real Docker chaos run — a genuine attribute-downgrade attack push was directly observed refused, full run finishing with zero plaintext-leak violations (see [03-orchestrator.md](../chaotests/03-orchestrator.md)'s "Since then" note) |
+| Orchestrator: every commit unique to a proposed ref must be signed by a recipient, checked against the base tip's own recipient list, not the merge result's | `chaos/actors/driver.mjs`, `chaos/remote/pre-receive-check.mjs` | — | ✅ built, confirmed both locally and on real GitHub Actions infrastructure ([run 34022273040](https://github.com/trinoris/securegit/actions/runs/34022273040)) — a genuine attribute-downgrade attack push was directly observed refused, every `advance`-tier leg finishing with zero plaintext-leak violations (see [03-orchestrator.md](../chaotests/03-orchestrator.md)'s "Since then" note) |
 
 ## Relationship to Other Specs
 

@@ -66,48 +66,37 @@ Signing is an *identity* check — is this commit from someone already
 trusted with this repository's secrets — enforced independently of
 whichever review workflow (or lack of one) a team runs on top of it.
 direct-master+advance isolates that question on its own: does signing
-alone stop an attacker with zero review process at all? **Confirmed
-locally: yes** — a real run watched all of the attacker's attempts
-refused directly on `master` itself, finishing with zero plaintext
-violations. Try it:
+alone stop an attacker with zero review process at all? **Confirmed, on
+real GitHub Actions infrastructure: yes** — every attacker attempt
+refused directly on `master` itself, 0 violations. Try it:
 `SANDBOX_WORKFLOW=direct-master SANDBOX_SIGNING=advance npm run chaos:sandbox`.
 
 ## What real runs actually found
 
 Not a projection — this is what happened, repeatedly, on real GitHub
-Actions infrastructure (the W1/W2/W3 baseline below), plus one finding so
-far confirmed only locally, called out precisely as such rather than
-folded into the same claim:
+Actions infrastructure. The full six-mode matrix was confirmed together
+in one run
+([34022273040](https://github.com/trinoris/securegit/actions/runs/34022273040)):
 
-- **W3 (pull-request-gated): `noPlaintextLeaked` and `repositoryIntact`
-  held clean in every single real run.** The attacker's downgrade/rollback/
-  hostile-recipient attempts landed on its own isolated branch and either
-  got explicitly rejected by the review (attribute downgrades, hostile
-  recipients) or simply had no shared state to poison in the first place
-  — each collaborator's branch is independent, so an attack against one
-  never reaches another's.
-- **W1 (direct push): a real plaintext leak in every single real run**,
-  ranging from a handful of violations to well over a hundred depending on
-  how long the run went and how the attacker's random timing landed — the
-  exact count isn't the point, the 100% failure rate is.
-- **W2 (shared working branch) leaked the same way, for the same reason —
-  a real GitHub Actions run measured 150 violations on one occasion.** A
-  gated *promotion* to `master` was never enough on its own: the shared
-  branch everyone reads and writes is already visible to anyone with
-  ordinary read access to the remote the moment anything lands on it —
-  long before a promotion review ever runs.
-- **Since then, locally (not yet re-confirmed on GitHub Actions): the
-  `advance` signing tier closes that gap, for both W1 and W2.** Once
-  every push — not just the promotion — requires a signature from a
-  registered recipient, local Docker runs watched the attacker's own
-  attribute-downgrade attempts get refused directly (on `working` for
-  W2+advance, on `master` itself for W1+advance), each finishing with
-  zero plaintext violations. Flagged as local-only deliberately: the fix
-  is built and the mechanism is understood, but "confirmed on real
-  GitHub Actions infrastructure" is a claim earned by actually running
-  there, not assumed from a local pass — the next scheduled or
-  dispatched `chaos` job run is what would earn it. The `basic` tier of
-  either workflow still leaks, by design (see the table above).
+- **W3 (pr-gated) holds clean in both signing tiers.** `basic`: 0
+  violations — branch isolation and content review already do the whole
+  job, no signing needed. `advance`: also 0 violations, defense-in-depth
+  on top. The attacker's downgrade/rollback/hostile-recipient attempts
+  landed on its own isolated branch and either got explicitly rejected by
+  the review or simply had no shared state to poison in the first place.
+- **W1 (direct push) and W2 (shared working branch) both leak under
+  `basic`** — direct-master: 12 violations, 3 hostile recipients;
+  working-branch: 157 violations, matching this project's own earlier
+  150-violation finding almost exactly. A gated *promotion* to `master`
+  (W2) was never enough on its own: the shared branch everyone reads and
+  writes is already visible to anyone with ordinary read access the
+  moment anything lands on it, long before a promotion review ever runs.
+- **Both close to zero under `advance`.** direct-master+advance and
+  working-branch+advance: 0 violations, 0 hostile recipients, in the same
+  run. Once every push — not just the promotion — requires a signature
+  from a registered recipient, the attacker's attribute-downgrade attempts
+  get refused directly (on `master` itself for W1, on `working` for W2),
+  before any content ever lands.
 - The live comparison — the actual current numbers, not last session's —
   is published every night: see "Watch it live" below.
 
