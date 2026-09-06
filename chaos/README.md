@@ -127,6 +127,8 @@ actual bug" needs judgement this script doesn't try to fully automate.
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `SANDBOX_WORKFLOW` | `direct-master` | Which of the three real git workflows to run: `direct-master` (W1), `working-branch` (W2), or `pr-gated` (W3) — see [specs/chaotests/03-orchestrator.md](../specs/chaotests/03-orchestrator.md). |
+| `SANDBOX_SIGNING` | `basic` | Independent of `SANDBOX_WORKFLOW` above: `basic` (off) or `advance` — every push, to every ref the workflow doesn't already refuse outright, must be signed by a fingerprint on the repository's own recipient list. Crossed with the three workflows, this gives six real, distinct modes, not three plus a variant. |
 | `CHAOS_DURATION_SECONDS` | 300 | How long actors/chaos agents run their loops. |
 | `VERIFIER_STARTUP_GRACE_SECONDS` | 30 | Extra time the verifier waits before the run duration even starts counting, to cover collaborator-a's bootstrap. |
 | `VERIFIER_SETTLE_SECONDS` | 60 | Extra time after `CHAOS_DURATION_SECONDS` before the verifier audits. Covers both in-flight pushes/rounds landing *and* the operator's own `finalIntegritySelfCheck()`, which decrypts every protected blob in history before it finishes — its own real cost, scaling with how much history the run accumulated. Raise this for a much longer `CHAOS_DURATION_SECONDS`. |
@@ -137,13 +139,19 @@ Set them by exporting before `npm run chaos:sandbox`, or editing
 
 ## Design choices worth knowing about
 
-- **Shared-secret model, not recipient/identity.** All three actors get
-  the *same* `SECUREGIT_PASSPHRASE` and collaborator-a's `keyring.json` is
+- **Decrypt access is still shared-secret; signing identity, once
+  adopted, is real per-person recipients.** All three actors get the
+  *same* `SECUREGIT_PASSPHRASE` and collaborator-a's `keyring.json` is
   distributed to the other two via a shared volume (`keyring-shared`) —
   simulating how a real team would exchange it out-of-band (05/06's
-  documented model: the keyring is deliberately never committed). The
-  recipient/identity flow (`key add-recipient`, per-person keypairs) is a
-  natural follow-up, not built here.
+  documented model: the keyring is deliberately never committed) — and
+  that part is unaffected by `SANDBOX_SIGNING`. What `SANDBOX_SIGNING=advance`
+  *does* build is the other half: a real per-person signing keypair for
+  collaborator-a/b (`chaos/actors/driver.mjs`'s `enableCommitSigning()`)
+  and a real `key add-recipient --signing-key` registration for each
+  (`registerSigningRecipients()`), chaos-5 deliberately never invited —
+  see [specs/securegit/08-multi-recipient.md](../specs/securegit/08-multi-recipient.md)'s
+  "Commit signing".
 - **Each collaborator edits only its own file** (`secrets/collaborator-a.json`,
   `secrets/collaborator-b.json`). Real push races (non-fast-forward,
   retry-after-pull) are fully exercised; content-level merge *conflicts*

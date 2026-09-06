@@ -138,8 +138,8 @@ specs/securegit/README.md#why-this-and-not-git-crypt--sops--age).
   Docker sandbox with adversarial agents, and the match-replay viewer that
   renders a run as a game (published nightly — see below).
 - **[CHAOS.md](CHAOS.md)** — what the chaos sandbox actually proves, in
-  plain terms: the three-workflow comparison, what real runs found, and
-  how to watch it live or run it yourself.
+  plain terms: the three-workflow x signing-tier comparison, what real
+  runs found, and how to watch it live or run it yourself.
 - **[FAQ.md](FAQ.md)** — common questions answered in plain terms, e.g.
   what an RMK is and why there's no "owner" role in the key model.
 
@@ -149,18 +149,19 @@ A Docker Compose stack simulates real collaborators, a hostile pusher, a
 file-corrupting "virus", and infrastructure faults (kills, disk pressure,
 network drops) running concurrently against a shared remote — across
 three different git workflows (direct push, a gated shared branch, or a
-fully PR-gated `master`) — then audits three hard invariants: no
-plaintext ever leaked, the repository's object graph stayed intact, and
-zero confirmed-pushed data was lost. **[CHAOS.md](CHAOS.md)** has the full
-story, including what real runs actually found.
+fully PR-gated `master`), each independently with and without commit
+signing enforced (six modes total) — then audits three hard invariants:
+no plaintext ever leaked, the repository's object graph stayed intact,
+and zero confirmed-pushed data was lost. **[CHAOS.md](CHAOS.md)** has the
+full story, including what real runs actually found.
 
 ```sh
 npm run chaos:sandbox
 ```
 
 See [chaos/README.md](chaos/README.md) for prerequisites and exact
-commands. A nightly run of all three workflows is published as a GitHub
-Pages site (`.github/workflows/build-ci.yml`'s `chaos` job) — the latest
+commands. A nightly run of all six modes is published as a GitHub Pages
+site (`.github/workflows/build-ci.yml`'s `chaos` job) — the latest
 comparison is viewable at `https://trinoris.github.io/securegit/`.
 
 ## Development
