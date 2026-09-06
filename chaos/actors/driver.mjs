@@ -1,7 +1,11 @@
 // Legitimate-actor driver, parameterized by SANDBOX_ROLE:
 //   collaborator-a  bootstraps the repo, then edits+commits+pushes its own
-//                   file on a loop, same as collaborator-b
+//                   file on a loop, same as collaborator-b/code-agent
 //   collaborator-b  waits for collaborator-a's bootstrap, then the same loop
+//   code-agent      the same loop again — a third ordinary collaborator,
+//                   modeling an AI coding agent committing like any human
+//                   one: no special-casing anywhere in this file, same
+//                   protections and requirements (COLLABORATOR_ROLES below)
 //   operator        never edits secrets/ files — runs unlock/status/verify/
 //                   rotate, plus reconciling attribute protection and
 //                   re-encrypting stale generations every round (T1
@@ -46,6 +50,13 @@ const WORKFLOW = process.env.SANDBOX_WORKFLOW ?? 'direct-master';
 const SANDBOX_SIGNING = process.env.SANDBOX_SIGNING ?? 'basic';
 const SIGNING_ENABLED = SANDBOX_SIGNING === 'advance';
 const SHARED_IDENTITY = (role) => join(SHARED_DIR, `identity-${role}.json`);
+// Every ordinary, non-operator legitimate role — each edits its own
+// secrets/<role>.json file on a loop (collaboratorRound(), already keyed
+// by ROLE, no changes needed there) and, once SIGNING_ENABLED, gets its
+// own registered signing identity. `code-agent` represents an AI coding
+// agent committing like any other collaborator — same protections, same
+// requirements, no special-casing anywhere else in this file.
+const COLLABORATOR_ROLES = ['collaborator-a', 'collaborator-b', 'code-agent'];
 // Only set (and only meaningful) for the operator under working-branch/
 // pr-gated — see `landReviewedMerge()`.
 const REMOTE_REPO_PATH = process.env.REMOTE_REPO_PATH;
@@ -177,13 +188,14 @@ async function publishSigningIdentity(identity) {
  * unable to sign anything under any registered key afterward.
  */
 async function registerSigningRecipients() {
-  await waitFor(() => exists(SHARED_IDENTITY('collaborator-a')) && exists(SHARED_IDENTITY('collaborator-b')), {
-    description: 'both collaborators publishing signing identities',
-  });
+  await waitFor(
+    async () => (await Promise.all(COLLABORATOR_ROLES.map((role) => exists(SHARED_IDENTITY(role))))).every(Boolean),
+    { description: 'every collaborator publishing its signing identity' },
+  );
   await git(['fetch', 'origin', BRANCH], { cwd: WORK_DIR, env: gitEnv() });
   const expectedOld = (await git(['rev-parse', `origin/${BRANCH}`], { cwd: WORK_DIR })).stdout.trim();
   await git(['checkout', '-B', BRANCH, `origin/${BRANCH}`], { cwd: WORK_DIR, env: gitEnv() });
-  for (const role of ['collaborator-a', 'collaborator-b']) {
+  for (const role of COLLABORATOR_ROLES) {
     const identity = JSON.parse(await readFile(SHARED_IDENTITY(role), 'utf8'));
     await record(
       'action',
@@ -245,7 +257,7 @@ async function bootstrapAsCollaboratorA() {
     // call was added — see specs/chaotests/01-sandbox.md's Status note).
     await record('action', 'securegit install', await securegit(['install'], { cwd: WORK_DIR }));
     await mkdir(join(WORK_DIR, 'secrets'), { recursive: true });
-    for (const role of ['collaborator-a', 'collaborator-b']) {
+    for (const role of COLLABORATOR_ROLES) {
       await writeFile(join(WORK_DIR, 'secrets', `${role}.json`), `${JSON.stringify({ role, counter: 0 }, null, 2)}\n`);
     }
     await git(['add', '-A'], { cwd: WORK_DIR, env: gitEnv() });
@@ -306,12 +318,13 @@ async function bootstrapAsFollower() {
 
   // The operator reviews other roles' branches but never contributes its
   // own content commits, so it has nothing for a signing check to gate —
-  // only collaborator-b needs an identity here (collaborator-a generated
-  // and published its own earlier, in bootstrapAsCollaboratorA()). The
-  // operator instead performs the *registration* itself once both
-  // identities exist, since it's the one role with the filesystem access
-  // to land that commit onto a hook-protected BRANCH at all.
-  if (ROLE === 'collaborator-b' && SIGNING_ENABLED) {
+  // every *other* collaborator role needs an identity here
+  // (collaborator-a generated and published its own earlier, in
+  // bootstrapAsCollaboratorA()). The operator instead performs the
+  // *registration* itself once every identity exists, since it's the one
+  // role with the filesystem access to land that commit onto a
+  // hook-protected BRANCH at all.
+  if (ROLE !== 'collaborator-a' && COLLABORATOR_ROLES.includes(ROLE) && SIGNING_ENABLED) {
     const identity = await enableCommitSigning();
     await publishSigningIdentity(identity);
   }

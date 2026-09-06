@@ -598,16 +598,18 @@
 (function () {
   'use strict';
 
-  var FRIENDLY_IDS = ['collaborator-a', 'collaborator-b', 'operator'];
-  var HOSTILE_IDS = ['chaos-4-virus', 'chaos-5-attacker', 'chaos-6-infra'];
-  var TARGET_OF = { 'chaos-4-virus': 'collaborator-a', 'chaos-6-infra': 'collaborator-b', 'chaos-5-attacker': null };
+  var FRIENDLY_IDS = ['collaborator-a', 'collaborator-b', 'code-agent', 'operator'];
+  var HOSTILE_IDS = ['chaos-4-virus', 'chaos-5-attacker', 'bad-agent', 'chaos-6-infra'];
+  var TARGET_OF = { 'chaos-4-virus': 'collaborator-a', 'chaos-6-infra': 'collaborator-b', 'chaos-5-attacker': null, 'bad-agent': null };
 
   var ROSTER_META = {
     'collaborator-a': { badge: 'A', label: 'collaborator-a', sub: 'collaborator' },
     'collaborator-b': { badge: 'B', label: 'collaborator-b', sub: 'collaborator' },
+    'code-agent': { badge: 'CA', label: 'code-agent', sub: 'AI coding agent' },
     'operator': { badge: 'OP', label: 'operator', sub: 'key rotation & audit' },
     'chaos-4-virus': { badge: '4', label: 'chaos-4 &middot; virus', sub: 'file corruption' },
     'chaos-5-attacker': { badge: '5', label: 'chaos-5 &middot; attacker', sub: 'hostile push access' },
+    'bad-agent': { badge: 'BA', label: 'bad-agent', sub: 'hostile AI agent' },
     'chaos-6-infra': { badge: '6', label: 'chaos-6 &middot; infra', sub: 'process / disk / network faults' }
   };
 
@@ -974,7 +976,7 @@
       return Object.assign(base, { kind: 'neutral', tag: role.toUpperCase(), text: msg });
     }
 
-    if (role === 'chaos-5-attacker') {
+    if (role === 'chaos-5-attacker' || role === 'bad-agent') {
       if (msg.indexOf('attack round') === 0) {
         // `rejected === true` (only possible for `direct-master-bypass`,
         // specs/chaotests/03-orchestrator.md) means the push was attempted
@@ -1059,7 +1061,7 @@
     }
 
     for (var r = 1; r <= ROUNDS; r++) {
-      ['collaborator-a', 'collaborator-b'].forEach(function (id) {
+      ['collaborator-a', 'collaborator-b', 'code-agent'].forEach(function (id) {
         pushedCount++;
         push(id, r, 'friendly', 'PUSH', 'commit ' + hex(7), { healTargetId: id });
       });
@@ -1089,12 +1091,14 @@
           ['T4', 'blob rolled back'],
           ['T5', 'hostile recipient added']
         ];
-        var pick = techs[Math.floor(Math.random() * techs.length)];
-        if (Math.random() < 0.7) {
-          push('chaos-5-attacker', r, 'hostile', pick[0] + ' LANDED', pick[1], { wasAttempt: true });
-        } else {
-          push('chaos-5-attacker', r, 'neutral', 'BLOCKED', 'non-fast-forward, rejected', { wasAttempt: true });
-        }
+        ['chaos-5-attacker', 'bad-agent'].forEach(function (attackerId) {
+          var pick = techs[Math.floor(Math.random() * techs.length)];
+          if (Math.random() < 0.7) {
+            push(attackerId, r, 'hostile', pick[0] + ' LANDED', pick[1], { wasAttempt: true });
+          } else {
+            push(attackerId, r, 'neutral', 'BLOCKED', 'non-fast-forward, rejected', { wasAttempt: true });
+          }
+        });
       }
     }
 
@@ -1110,7 +1114,7 @@
       t: t, combatantId: 'operator', round: ROUNDS, kind: 'done', done: true, tag: 'STAND DOWN', text: ROUNDS + ' rounds',
       audit: { plaintext: 'secure', integrity: 'secure', dataLoss: 'secure' }
     });
-    ['collaborator-a', 'collaborator-b', 'chaos-4-virus', 'chaos-5-attacker', 'chaos-6-infra'].forEach(function (id) {
+    ['collaborator-a', 'collaborator-b', 'code-agent', 'chaos-4-virus', 'chaos-5-attacker', 'bad-agent', 'chaos-6-infra'].forEach(function (id) {
       t += 0.6;
       events.push({ t: t, combatantId: id, round: ROUNDS, kind: 'done', done: true, tag: 'STAND DOWN', text: ROUNDS + ' rounds' });
     });

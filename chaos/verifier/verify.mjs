@@ -132,15 +132,18 @@ async function checkAttributeState() {
   return { present: true, containsFilter: res.stdout.includes('filter=securegit') };
 }
 
-// The only two recipients this sandbox ever legitimately creates
+// The only recipients this sandbox ever legitimately creates
 // (chaos/actors/driver.mjs's registerSigningRecipients(), `--label
-// ${role}`) — added once commit signing entered the sandbox
-// (specs/chaotests/03-orchestrator.md's "Since then" note). Before that,
-// *any* file under `.securegit/recipients/` was hostile by construction,
-// since nobody legitimate ever added one; that assumption broke the
-// moment this sandbox started registering real recipients of its own,
-// which is exactly what this filter restores.
-const LEGITIMATE_RECIPIENT_LABELS = new Set(['collaborator-a', 'collaborator-b']);
+// ${role}`, one per COLLABORATOR_ROLES entry there) — added once commit
+// signing entered the sandbox (specs/chaotests/03-orchestrator.md's
+// "Since then" note). Before that, *any* file under
+// `.securegit/recipients/` was hostile by construction, since nobody
+// legitimate ever added one; that assumption broke the moment this
+// sandbox started registering real recipients of its own, which is
+// exactly what this filter restores. Kept as its own list (not imported
+// from driver.mjs) since this file runs in a separate container with no
+// shared module boundary — must be kept in sync by hand.
+const LEGITIMATE_RECIPIENT_LABELS = new Set(['collaborator-a', 'collaborator-b', 'code-agent']);
 
 async function checkHostileRecipients() {
   const paths = await pathsUnder(BRANCH, '.securegit/recipients');

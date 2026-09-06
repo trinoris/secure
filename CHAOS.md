@@ -135,9 +135,11 @@ commands, and troubleshooting.
 | | Role | Behaviour |
 |---|---|---|
 | collaborator-a / collaborator-b | Legitimate collaborators | Clone, protect a file set, edit/commit/push on a loop, unlock as needed — ordinary daily use |
+| code-agent | Legitimate collaborator (AI) | Identical loop to collaborator-a/b, no special-casing anywhere in the driver — models an AI coding agent committing like any human collaborator, same protections and signing requirements |
 | operator / orchestrator | Maintenance & review | `direct-master`: key rotation, `verify`, status checks, and post-hoc attribute recovery. `working-branch`/`pr-gated`: reviews every proposed change before `master` ever moves |
 | chaos-4 "virus" | Local corruption | Tampers with a collaborator's own session/keyring/identity files — the shape of commodity ransomware or a crashing backup tool |
 | chaos-5 "attacker" | Hostile collaborator | Ordinary push access, nothing more — attempts attribute downgrades, blob relocation/rollback, and hostile recipients, exactly matching a real collaborator who turns hostile |
+| bad-agent | Hostile collaborator (AI) | code-agent's adversarial counterpart — a second, independent instance of chaos-5's exact attack catalogue, modeling a compromised or malicious AI agent, never coordinated with chaos-5 |
 | chaos-6 "infra" | Infrastructure faults | Kills processes mid-operation, fills disk, drops network links — impersonal fault injection, not attacker-shaped |
 | verifier | Auditor | No key, fresh clone only — exactly the access a real outside auditor would have |
 

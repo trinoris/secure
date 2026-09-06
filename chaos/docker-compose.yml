@@ -5,17 +5,22 @@
 # `docker compose up --abort-on-container-exit`).
 #
 # Topology: remote (bare repo, git://) <- collaborator-a, collaborator-b,
-# operator (legitimate actors) <- chaos-4 "virus" paired with
+# code-agent, operator (legitimate actors — code-agent modeling an AI
+# coding agent, same protections as any human collaborator, no special-
+# casing anywhere in driver.mjs) <- chaos-4 "virus" paired with
 # collaborator-a's HOME, chaos-6 "infra" paired with collaborator-b
 # (shares its PID + network namespace too, so it can kill its subprocess
 # and drop its network link, not just touch its files) <- chaos-5
-# "attacker", its own container, push-only access to `remote`, no access
-# to any actor. The `verifier` runs last, auditing a fresh clone of
-# `remote` plus the shared run report.
+# "attacker" and bad-agent (its adversarial counterpart to code-agent — a
+# second, independent instance of the exact same attack catalogue, never
+# coordinated with chaos-5), each its own container, push-only access to
+# `remote`, no access to any actor. The `verifier` runs last, auditing a
+# fresh clone of `remote` plus the shared run report.
 #
 # `operator` (collaborator-c / actor-3) deliberately gets no paired chaos
 # agent in this v1 — a reasonable first scope, not an oversight (see
-# specs/chaotests/01-sandbox.md).
+# specs/chaotests/01-sandbox.md). `code-agent` likewise has no paired
+# chaos-4/chaos-6-style local-corruption agent of its own yet.
 
 x-common-env: &common-env
   REMOTE_URL: git://remote/repo.git
@@ -95,6 +100,26 @@ services:
       - keyring-shared:/shared
       - home-actor2:/home/collaborator-b
 
+  # A third ordinary collaborator — same loop, same protections, same
+  # signing requirements once SANDBOX_SIGNING=advance (driver.mjs's
+  # COLLABORATOR_ROLES) — modeling an AI coding agent committing like any
+  # other legitimate actor, with no special-casing anywhere in the driver.
+  code-agent:
+    build:
+      context: ..
+      dockerfile: chaos/Dockerfile
+    command: ["node", "/chaos/actors/driver.mjs"]
+    depends_on: [remote, collaborator-a]
+    environment:
+      <<: *common-env
+      SANDBOX_ROLE: code-agent
+      HOME: /home/code-agent
+      WORK_DIR: /work
+    volumes:
+      - report-data:/report
+      - keyring-shared:/shared
+      - home-actor4:/home/code-agent
+
   operator:
     build:
       context: ..
@@ -155,6 +180,33 @@ services:
     # push access to `remote`, exactly like a real hostile collaborator,
     # never any actor's local state or key material.
 
+  # A second, independent hostile pusher — the adversarial counterpart to
+  # code-agent above: a compromised or malicious AI agent, modeled with
+  # exactly chaos-5's own attack catalogue (chaos/agents/attacker.mjs is
+  # already generic over SANDBOX_ROLE, used here purely for its own
+  # feature-branch naming under pr-gated — no code changes needed to add
+  # this second instance). Doubles attack pressure from two independent
+  # unregistered pushers running concurrently, never coordinated with each
+  # other or with chaos-5.
+  bad-agent:
+    build:
+      context: ..
+      dockerfile: chaos/Dockerfile
+    command: ["node", "/chaos/agents/attacker.mjs"]
+    depends_on: [remote]
+    environment:
+      SANDBOX_ROLE: bad-agent
+      REMOTE_URL: git://remote/repo.git
+      BRANCH: main
+      WORK_DIR: /work
+      REPORT_PATH: /report/report.jsonl
+      CHAOS_DURATION_SECONDS: ${CHAOS_DURATION_SECONDS:-300}
+      SANDBOX_WORKFLOW: ${SANDBOX_WORKFLOW:-direct-master}
+    volumes:
+      - report-data:/report
+    # Same guardrails as chaos-5-attacker: no HOME/keyring volume of any
+    # kind, ordinary push access to `remote` only.
+
   chaos-6-infra:
     build:
       context: ..
@@ -213,4 +265,5 @@ volumes:
   home-actor1: {}
   home-actor2: {}
   home-actor3: {}
+  home-actor4: {}
   remote-repo-data: {}

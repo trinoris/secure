@@ -1,9 +1,13 @@
 # Chaos Sandbox
 
 Implements `specs/chaotests/01-sandbox.md`. A Docker Compose stack: a bare
-remote repo, three legitimate actors (`collaborator-a`, `collaborator-b`,
-`operator`), three chaos agents (`chaos-4-virus`, `chaos-5-attacker`,
-`chaos-6-infra`), and a `verifier` that audits the result.
+remote repo, four legitimate actors (`collaborator-a`, `collaborator-b`,
+`code-agent`, `operator`), four chaos agents (`chaos-4-virus`,
+`chaos-5-attacker`, `bad-agent`, `chaos-6-infra`), and a `verifier` that
+audits the result. `code-agent`/`bad-agent` are, respectively, an AI
+coding agent modeled with the exact same protections as any human
+collaborator, and its adversarial counterpart — a second, independent
+instance of chaos-5's own attack catalogue, never coordinated with it.
 
 **Update: since verified end-to-end via GitHub Actions' `chaos` job**,
 running real `docker compose` (not WSL, where it still wasn't available in
@@ -50,7 +54,7 @@ later). If it's not available, substitute polling
 
 `chaos/viewer/index.html` is a self-contained (no build step, no server)
 replay viewer — open it directly in a browser. It renders a run as a
-game: the three collaborators/operator as "friendly systems", the three
+game: the four collaborators/operator as "friendly systems", the four
 chaos agents as "hostile contacts", a live commit-graph-style event log,
 and the three hard invariants as gauges that resolve once the match ends.
 
