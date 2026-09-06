@@ -877,6 +877,12 @@
 
   function loadEvents(events, opts) {
     pause();
+    // Invalidates any delayed gauge-override callback still pending from a
+    // previous load (tryLoadPublishedRun's own `setTimeout` below) —
+    // without this, switching away again within that window would let a
+    // stale timeout overwrite the *new* match's gauges with the old one's
+    // final result a moment later.
+    state.loadToken = (state.loadToken || 0) + 1;
     state.events = events;
     state.index = 0;
     state.combatants = freshCombatants();
@@ -1186,19 +1192,29 @@
       // The verifier's own audit is authoritative — overrides whatever the
       // replay-only guess above could tell (only ever the data-recovery
       // gauge; see specs/chaotests/02-viewer.md's "Two input shapes, two
-      // views"). Set immediately rather than waiting for playback to
-      // reach the end, since this is a status page people check quickly.
+      // views"). On a short delay, deliberately: `loadEvents()` just reset
+      // every gauge to "AWAITING AUDIT" a line above this — applying the
+      // override in the same tick, with no paint in between, meant
+      // switching matches (or re-running) never actually *showed* that
+      // reset at all, jumping straight to the old-vs-new final state with
+      // nothing in between. The pause is purely visual; the override
+      // itself is still authoritative, not waiting on playback to resolve
+      // it "for real".
       var inv = result.invariants || {};
       var audit = {
         plaintext: inv.noPlaintextLeaked ? 'secure' : 'breach',
         integrity: inv.repositoryIntact ? 'secure' : 'breach',
         dataLoss: inv.zeroDataLoss ? 'secure' : 'breach',
       };
-      state.finalAudit = audit;
-      state.replayOnly = false;
-      setGauge('plaintext', audit.plaintext);
-      setGauge('integrity', audit.integrity);
-      setGauge('dataloss', audit.dataLoss);
+      var loadToken = state.loadToken; // bumped by loadEvents() just above (the events.length > 0 branch — the only one that reaches here with a pending state to protect)
+      setTimeout(function () {
+        if (state.loadToken !== loadToken) return; // superseded by another switch/rerun since
+        state.finalAudit = audit;
+        state.replayOnly = false;
+        setGauge('plaintext', audit.plaintext);
+        setGauge('integrity', audit.integrity);
+        setGauge('dataloss', audit.dataLoss);
+      }, 600);
     }
     return true;
   }
