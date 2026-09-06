@@ -194,10 +194,18 @@ hook and a conflicted merge does not leave a plaintext `.orig`.
 
 ### Deliberately not phased
 
-Hardware providers (`tpm2`, `piv`, `os-keychain`) sit behind
-[06](06-key-provider-port.md)'s port and can be added at any point without
-touching anything else. That is the whole reason the port exists, and adding one
-early would prove nothing the conformance suite does not already assert.
+Hardware and cloud-KMS providers (`tpm2`, `os-keychain`, `kms-envelope`,
+`yubikey-piv`, `yubikey-fido2`) sit behind [06](06-key-provider-port.md)'s
+port and can be added at any point without touching anything else. That
+is the whole reason the port exists, and adding one early would prove
+nothing the conformance suite does not already assert. Three of the five
+now have a concrete design (06's "Concrete designs for the next three
+providers"), including the recommendation that the two hardware ones ship
+as separate, optional companion packages — `@trinoris/securelib-piv` and
+`@trinoris/securelib-fido2`, named under a future shared library rather
+than this package (see [../../ARCHITECTURE.md](../../ARCHITECTURE.md)) —
+rather than in core, but
+"designed" is still "not built."
 
 ## Current status
 

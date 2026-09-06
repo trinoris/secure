@@ -47,6 +47,48 @@ securegit unlock
 
 **Details:** [README.md](README.md#quickstart)
 
+## What kind of keystore does it support? Can I use a TPM, smartcard, or my OS's keychain?
+
+Today, one: a passphrase. Your key is stored locally, locked behind a
+passphrase only you know, using the same kind of slow, deliberately
+expensive scrambling banks and password managers use to make a stolen
+copy useless without your actual passphrase (technically: `scrypt` to
+turn your passphrase into a lock, then AES-256-GCM to actually lock the
+key with it).
+
+The design deliberately leaves room for more, and two of these now have
+a real, concrete plan (not just an idea) written up, even though none of
+them are built yet:
+
+- **A TPM chip, or your operating system's own keychain** (Windows
+  Credential Manager, macOS Keychain) — planned, not yet designed in
+  detail.
+- **A YubiKey or similar hardware security key** — this one has a real,
+  concrete design now, using either the key's smartcard mode (PIV) or
+  its authentication mode (FIDO2). Either way, the actual secret material
+  never leaves the physical device — you plug it in and touch it, the
+  device does the unlocking math itself, and nothing your computer can
+  read ever includes the raw key.
+- **A cloud key vault (AWS KMS, Google Cloud KMS, Azure Key Vault)** —
+  also has a concrete design, but with an important limit, on purpose:
+  this can never be your *only* way in. A cloud provider's key vault is
+  still something that provider could theoretically be compelled to
+  unlock, so it's only ever allowed as one option among several — useful
+  as a company-wide "break glass" backup, never as the single point of
+  trust the whole point of this tool is to avoid.
+
+None of the three are built yet — a passphrase alone already gets almost
+everyone real, meaningful protection, and the hardware/cloud versions are
+real engineering work worth scoping properly first rather than building
+speculatively.
+
+Worth keeping separate: this is about what protects *your own*
+computer's copy of the key. Sharing that key with a teammate is a
+different mechanism entirely (see the next question) — every teammate
+still protects their own copy locally, the same way you protect yours.
+
+**Details:** [specs/securegit/06-key-provider-port.md](specs/securegit/06-key-provider-port.md)
+
 ## How do I give a teammate access?
 
 They generate their own key on their own computer (`securegit identity
@@ -197,6 +239,39 @@ everything" command is a reasonable thing to add later; it doesn't exist
 yet.
 
 **Details:** [specs/securegit/13-verify.md](specs/securegit/13-verify.md)
+
+## I have an old repository that's already full of unencrypted files. Can I switch it over?
+
+Yes — you don't need a fresh start. Three commands:
+
+```sh
+securegit init
+securegit protect secrets/*.json
+securegit reencrypt
+```
+
+The first two set things up and tell it which files to protect. The
+third is the important one for an existing repo: it takes every file
+you just told it to protect — even ones that have been sitting there as
+plain, unencrypted text for months — and encrypts them right now, as one
+normal commit you can review before it goes anywhere. From that point
+on, your everyday `git add`/`commit`/`push` just works, the same as a
+brand-new repository.
+
+**The one thing this can't do: erase the past.** Every commit made
+*before* that point still has the old file in plain text, permanently,
+sitting in your repository's history. Turning on encryption today
+protects everything from today onward — it doesn't reach backward in
+time. You can find out exactly how much old plaintext you're carrying
+with `securegit verify --history`. If you genuinely need that old
+history scrubbed too, that requires a separate, more disruptive step
+(rewriting your repository's history and force-pushing it — securegit
+doesn't do this for you), and even then: if that secret was ever real
+and ever seen by someone who shouldn't have it, the only thing that
+actually fixes that is changing the secret itself, not hiding where it
+used to be written down.
+
+**Details:** [specs/securegit/09-rotation-recovery.md](specs/securegit/09-rotation-recovery.md)
 
 ## My team already works a certain way — is securegit still worth it?
 

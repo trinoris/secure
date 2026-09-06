@@ -142,6 +142,10 @@ specs/securegit/README.md#why-this-and-not-git-crypt--sops--age).
   runs found, and how to watch it live or run it yourself.
 - **[FAQ.md](FAQ.md)** — common questions answered in plain terms, e.g.
   what an RMK is and why there's no "owner" role in the key model.
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — proposed, not yet executed:
+  splitting the git-agnostic crypto core out into `@trinoris/securelib`,
+  a shared library that future hardware-key providers and a future
+  document-focused sibling project could both depend on.
 
 ## Chaos sandbox
 

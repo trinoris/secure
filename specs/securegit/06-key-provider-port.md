@@ -10,12 +10,16 @@ This is the interface that keeps that choice out of the crypto core.
 **Status: IMPLEMENTED — the port, one provider, and the CLI surface to add
 or remove one.** `src/provider.ts` (the `KeyProvider` interface) and
 `PassphraseFileProvider` are both built and tested. `passphrase-file`
-remains the only v1 implementation; hardware providers (`tpm2`, `piv`,
-`os-keychain`) sit behind this same port, unimplemented, by design — see
+remains the only v1 implementation; hardware and cloud-KMS providers
+(`tpm2`, `os-keychain`, `kms-envelope`, `yubikey-piv`, `yubikey-fido2`)
+sit behind this same port, unimplemented, by design — see
 [00](00-test-plan.md)'s "Deliberately not phased" note, which no longer
 covers `key add-provider`/`remove-provider`/`list` themselves (those are
-built now, see below), only the hardware provider types they'd otherwise
-have nothing real to add or remove.
+built now, see below), only the hardware/cloud provider types they'd
+otherwise have nothing real to add or remove. Three of those five now
+have a concrete design, not just a name: see "Concrete designs for the
+next three providers" below for `kms-envelope`, `yubikey-piv`, and
+`yubikey-fido2` — design only, no code yet.
 
 `key add-provider`/`remove-provider`/`list` ([10](10-cli-contract.md)) are
 implemented as `addProvider()`/`removeProvider()` in `src/keyring.ts`.
@@ -145,9 +149,10 @@ existing code.
 | `passphrase-file` | no | **v1** | scrypt → KEK → AES-256-GCM. Works everywhere, including WSL and CI. |
 | `os-keychain` | no | designed | DPAPI / macOS Keychain / libsecret. Better UX; no keychain under WSL, so it always needs a fallback. |
 | `tpm2` | no | designed | Seals the RMK to PCRs. Machine-bound: a re-imaged laptop loses it, so it is never the only path. |
-| `piv` | no | designed | YubiKey / smartcard. Portable, hardware-bound, matches the threat model best. |
+| `yubikey-piv` | no | **designed, concretely** | YubiKey / PIV smartcard, via the card's own ECDH operation. See "Concrete designs" below. |
+| `yubikey-fido2` | no | **designed, concretely** | YubiKey / any FIDO2 authenticator, via the `hmac-secret` CTAP2 extension. See "Concrete designs" below. |
 | `recovery-code` | no | built, but not a `KeyProvider` | Not interactive; used by `import-recovery` ([09](09-rotation-recovery.md)). As built, this is *not* a `KeyProvider` implementation behind this port — `src/recovery.ts` derives its wrap key directly from the code via HKDF and does its own AES-256-GCM wrap/unwrap, bypassing `provider.ts` entirely. The RMKs it recovers are then handed to an ordinary `PassphraseFileProvider` (via `keyringFromRecoveredGenerations`) to become the new local keyring's actual provider. The reason: this port's `init`/`wrap`/`unwrap` shape is built around one *persistent* secret per generation (a passphrase, a TPM binding); a recovery code instead needs to decrypt *every* generation at once under one code, which doesn't fit that per-generation shape without distortion. |
-| `kms` | **yes** | designed | Deliberate escrow only. See below. |
+| `kms-envelope` | **yes** | **designed, concretely** | Deliberate escrow only, never the sole path. See "Concrete designs" below. |
 
 ## `custodial` is the field that matters
 
@@ -203,6 +208,212 @@ to be a visible trade rather than an accident of configuration.
   adversary holding the file (A4 in [01](01-threat-model.md)). `key init` refuses
   a passphrase under 12 characters and reports an estimate; it does not enforce
   composition rules, which produce worse passphrases.
+
+## Concrete designs for the next three providers
+
+**Design only — none of the three below are built.** Same status as
+`tpm2`/`os-keychain` always had, just made concrete enough to build from
+rather than left as a name in a table. All three fit the existing port
+(`init`/`wrap`/`unwrap`/`describe`/`available`) with no change to it —
+that's the port's whole reason for existing, and building one of these
+should touch nothing outside its own file plus a row in `provider.conformance.test.ts`'s
+registration list.
+
+### `kms-envelope` — AWS KMS / GCP Cloud KMS / Azure Key Vault
+
+**Never the sole root.** This is the one case the port's `custodial` field
+exists for: [01](01-threat-model.md) already rules KMS out as a root, and
+this provider is the "deliberate escrow path an organisation opts into"
+that same section explicitly allows. Nothing new to enforce here — the
+existing rules already cover it exactly:
+
+- `describe().custodial` is `true`, so `addProvider()`'s existing "does
+  every generation still have a non-custodial path" reasoning and the L10
+  `verify` check (["What can go wrong quietly"](13-verify.md)) apply to it
+  automatically, with no provider-specific code.
+- `securegit status` names it in the clear as an escrow path — again, the
+  existing custodial-provider behavior, not new behavior.
+
+**One backend interface, three implementations.** `wrap`/`unwrap` never
+call a cloud SDK directly — they call a small `KmsBackend` port of their
+own, mirroring how `KeyProvider` itself sits behind `provider.ts`:
+
+```typescript
+interface KmsBackend {
+  /** Resource id (ARN / key resource name / vault key id) is opaque here too. */
+  // Deliberately typed as `rmkBytes`, not `plaintext` — this backend ever
+  // sees exactly one thing: the 32-byte RMK itself, once per `wrap`/
+  // `unwrap`. It never sees, and this interface can't be handed, any
+  // actual protected file's content — that always stays local (see
+  // "Never the sole root" above and 05-key-hierarchy.md's derivation
+  // tree). This is the whole reason it's called an *envelope* provider.
+  encrypt(rmkBytes: Buffer, keyId: string, context: Record<string, string>): Promise<Buffer>;
+  decrypt(wrappedRmkBytes: Buffer, keyId: string, context: Record<string, string>): Promise<Buffer>;
+}
+```
+
+`KmsEnvelopeProvider.wrap()` calls `backend.encrypt(rmk, keyId, { repoId,
+generation: String(generation) })` and stores the returned ciphertext plus
+`keyId` and a `backend` tag (`"aws"` / `"gcp"` / `"azure"`) in
+`WrappedKey.payload`; `unwrap()` calls `backend.decrypt()` with the same
+context. Every cloud KMS API accepts an authenticated-but-unencrypted
+context string bound into the ciphertext (AWS calls it an "encryption
+context", GCP and Azure both call it AAD) — used exactly like
+`passphrase-file`'s own AAD above: a blob copied into another repository's
+keyring, or presented under the wrong generation, fails to decrypt rather
+than silently succeeding somewhere it shouldn't.
+
+**Zero new runtime dependencies is achievable, not just aspirational —
+worth actually doing, not a nice-to-have.** A cloud KMS `Encrypt`/`Decrypt`
+call is one signed HTTPS request; none of the three clouds require their
+SDK to make it:
+
+- **AWS KMS**: SigV4 request signing is HMAC-SHA256 over a canonical
+  request — directly buildable from `node:crypto` and `node:https`, no
+  `aws-sdk`/`@aws-sdk/client-kms` needed. This is real, well-trodden
+  ground (every from-scratch SigV4 implementation in any language follows
+  the same published algorithm), not a novel crypto design.
+- **GCP Cloud KMS** and **Azure Key Vault** authenticate via a signed JWT
+  (a service-account key or Azure AD client-credentials flow) — RS256/
+  HS256 JWT signing is also directly buildable from `node:crypto`. More
+  request-shape code per backend than AWS (each cloud's REST API differs),
+  but the same "no SDK dependency" property holds for all three.
+
+Keeping this dependency-free matters here specifically because
+`kms-envelope` — unlike the two hardware providers below — has no
+inherent reason to need a native dependency at all (it's just an
+authenticated HTTPS call), so there's no honest excuse to pull in a full
+cloud SDK and its own dependency tree into a package whose whole pitch is
+holding encryption keys with as little else to compromise as possible.
+This can ship inside the core package, unlike the two below.
+
+**Interactivity:** a network call, not a hardware prompt — `wrap`/`unwrap`
+need network access but nothing from `ctx.interactive`, and happen once
+per `unlock` (cached in the session, [07](07-unlock-session.md)), never
+once per file.
+
+**Test plan:** `KmsBackend` is the injection seam. A `FakeKmsBackend`
+(in-memory `Map<keyId, plaintext-by-ciphertext>`, context checked exactly
+like the real thing would enforce it) lets `KmsEnvelopeProvider` run
+through the *entire* existing `provider.conformance.test.ts` suite —
+`describe.each` gains a fourth row — with zero real network calls, exactly
+like `PassphraseFileProvider` needs no real disk contention today. A
+separate, clearly-labeled real-backend integration test per cloud,
+skipped unless real credentials are present in the environment (`aws-vault`-
+style, never committed), is the only thing that would need actual AWS/GCP/
+Azure access — appropriate to add once a backend is actually implemented,
+not before.
+
+### `yubikey-piv` — YubiKey / any PIV smartcard
+
+**Reuses the card's own PIV key-management slot**, the same approach
+[age-plugin-yubikey](https://github.com/str4d/age-plugin-yubikey) and
+similar tools already use: a PIV card's "key management" slot (9d, by
+PIV convention) holds a NIST P-256 (or P-384) keypair whose private half
+never leaves the card. Shape mirrors an X25519 recipient
+([08](08-multi-recipient.md)) almost exactly, just over the curve real
+off-the-shelf PIV hardware speaks instead of X25519:
+
+```
+init:   read the card's existing slot-9d public key (or generate one on
+        the card, if PIV's own key-generation is preferred over import)
+wrap:   ephemeral P-256 keypair ──ECDH(ephemeral.priv, card.pub)──▶ shared secret
+                                  ──HKDF──▶ 32-byte KEK
+        RMK ──AES-256-GCM(KEK)──▶ wrapped
+        payload = { ephemeralPublicKey, wrapped, aad = repoId ‖ generation }
+unwrap: send { ephemeralPublicKey } to the card's PIV applet, ask it to
+        perform ECDH(card.priv-on-card, ephemeralPublicKey) — the private
+        operation happens ON the card, the result (shared secret) is all
+        that comes back — then HKDF ──▶ KEK ──▶ AES-256-GCM decrypt
+```
+
+`describe()`: `custodial: false` (the private key never leaves the
+hardware — nobody can be compelled to produce it, only to use it once,
+with the card physically present), `requiresHardware: true`.
+
+**Interactivity is not optional, and the port already has the field for
+it.** A PIV card's private-key operation requires the PIN every time (and,
+depending on the slot's touch policy, a physical touch) — there is no
+non-interactive path, ever. `unwrap` must check `ctx.interactive` first
+and throw a specific, actionable error when it's `false` — "PIV requires
+`securegit unlock` first; a Git filter cannot prompt for a PIN" — exactly
+matching how `interactive: false` inside a filter is already a first-class
+case this port's design anticipates ([07](07-unlock-session.md)).
+
+**The one honest new cost: this needs a real dependency, and that's not
+avoidable.** Talking to a smartcard means PC/SC (`libpcsclite` on Linux,
+built into Windows and macOS) — Node has no built-in path to it. Two real
+options, both genuinely "a new dependency", not zero-cost:
+- a native addon (`node-pcsclite` or similar, compiled per-platform), or
+- shelling out to an already-installed external tool (`ykman piv`,
+  OpenSC's `pkcs11-tool`) and parsing its output.
+
+**Recommendation: ship this as a separate, optional companion package —
+`@trinoris/securelib-piv`, not `securegit-piv`.** Named under the shared
+library, not this consumer, because nothing about a `KeyProvider` that
+wraps and unwraps a 32-byte key is Git-specific — it's exactly as usable
+by a future non-Git consumer of the same port as it is by `securegit`.
+See [../../ARCHITECTURE.md](../../ARCHITECTURE.md) for the full reasoning
+and the `@trinoris/securelib` extraction this naming anticipates. Either
+way — inside `securegit` today or `securelib` once it exists — the point
+holds: the core package's "zero runtime dependencies" claim
+([README.md](../../README.md)) is a stated security property, not an
+incidental fact, and a hardware provider that genuinely needs native/
+external access shouldn't cost every user who never touches hardware
+providers a new dependency in their own supply chain. This needs a small,
+separate design of its own: a plugin convention (likely: an env var or
+`config.json` field naming an npm package the core `require()`s for
+additional providers at startup) — a smaller, independent design
+question from this provider's own crypto, not addressed further here.
+
+**Test plan:** a `PivCard` transport interface —
+`getPublicKey(slot): Promise<Buffer>`, `ecdh(slot, peerPublicKey, pin):
+Promise<Buffer>` — is the injection seam, faked in-memory for the full
+conformance suite the same way `KmsBackend` is above. A real-hardware
+integration test is separate, manual, and can never run in CI without a
+physical key attached — an honest limit, not a gap to silently paper
+over, the same way this project already treats "code execution on an
+unlocked workstation" as a named boundary rather than a solved problem
+([01](01-threat-model.md)).
+
+### `yubikey-fido2` — any FIDO2 authenticator, via `hmac-secret`
+
+**A different mechanism from PIV, for hardware that only speaks FIDO2**
+(no PIV applet) or where CTAP2 is preferred over smartcard middleware.
+Uses the `hmac-secret` CTAP2 extension — designed for exactly this
+"derive a stable secret from a physical key" use, distinct from FIDO2's
+usual authentication role:
+
+```
+init:   MakeCredential(hmac-secret extension requested)
+          ──▶ credentialId (store in ProviderState; a fresh random
+              32-byte salt, also stored — public, not secret, since the
+              hmac-secret result depends on the physical authenticator
+              too)
+wrap:   GetAssertion(credentialId, salt, hmac-secret extension)
+          ──▶ stable 32-byte secret, only reproducible by the same
+              physical key presented with the same salt
+        secret ──▶ KEK; RMK ──AES-256-GCM(KEK)──▶ wrapped
+unwrap: GetAssertion(credentialId, salt, hmac-secret) ──▶ same secret ──▶ KEK ──▶ decrypt
+```
+
+`describe()`: `custodial: false`, `requiresHardware: true`. Same
+`ctx.interactive` gate as PIV — `GetAssertion` requires user presence (a
+touch) essentially always, no non-interactive path.
+
+**Same real-dependency situation as PIV, for a different reason:** Node
+has no built-in USB HID or CTAP2/WebAuthn client support, so this needs a
+CTAP2 client library capable of talking to the raw device — not a browser
+WebAuthn call (there's no browser here). Same recommendation, same name
+pattern, as PIV: an optional companion package,
+**`@trinoris/securelib-fido2`**, not `securegit-fido2` — see
+[../../ARCHITECTURE.md](../../ARCHITECTURE.md).
+
+**Test plan:** a `Fido2Authenticator` transport interface —
+`makeCredential(extensions): Promise<{credentialId}>`,
+`getAssertion(credentialId, salt): Promise<Buffer>` — fakeable the same
+way as `KmsBackend`/`PivCard`; real-hardware coverage is separate, manual,
+same honest CI limit as PIV.
 
 ## Multiple providers per repository
 
@@ -290,6 +501,12 @@ have at least one non-custodial way back in.
 | `key unlock` tries every passphrase-file-shaped provider id present, not only the unlabeled default | `src/cli.test.ts` | — | ✅ |
 | A custodial-only repository is a `verify` finding | `src/verify.test.ts` | — | ✅ |
 | Provider never receives a path or file content | `src/provider.conformance.test.ts` | — | ✅ |
+| `KmsEnvelopeProvider` passes the full conformance suite against a `FakeKmsBackend` | `src/provider.conformance.test.ts` | — | not built — design only, see "Concrete designs" above |
+| `KmsEnvelopeProvider.wrap`/`unwrap` bind `repoId`/`generation` into the backend's own AAD/encryption-context field | `src/provider.test.ts` | — | not built — design only |
+| A repository with only `kms-envelope` wrapping the current generation is a `verify` finding (existing custodial-only check, no new logic) | `src/verify.test.ts` | — | not built — design only |
+| `YubikeyPivProvider` passes the full conformance suite against a `FakePivCard` | `src/provider.conformance.test.ts` | — | not built — design only, see "Concrete designs" above |
+| `YubikeyPivProvider.unwrap` throws a specific, actionable error when `ctx.interactive` is `false` | `src/provider.test.ts` | — | not built — design only |
+| `YubikeyFido2Provider` passes the full conformance suite against a `FakeFido2Authenticator` | `src/provider.conformance.test.ts` | — | not built — design only, see "Concrete designs" above |
 
 ## Relationship to Other Specs
 
