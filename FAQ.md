@@ -172,6 +172,32 @@ repository in the first place.
 
 **Details:** [specs/securegit/05-key-hierarchy.md](specs/securegit/05-key-hierarchy.md)
 
+## What if an encrypted file gets corrupted — would I even find out?
+
+Yes, and it's worth knowing *how*, because the obvious guess is wrong.
+`git fsck` (Git's own built-in health check) does **not** catch this — it
+only checks that Git's internal bookkeeping is sound, not whether the
+data inside a file makes any sense. A scrambled, unrecoverable file would
+look perfectly fine to `git fsck`.
+
+What actually catches it is the encryption itself. The method used
+(AES-256-GCM) doesn't just scramble data — it also seals it with a kind
+of tamper-evident stamp. If even a single bit of a protected file changes
+after it was encrypted — from a storage glitch, a bad merge, anything —
+unlocking it will fail loudly and immediately, instead of silently
+handing you garbage and pretending everything's fine. This is tested
+directly: the test suite deliberately corrupts encrypted data, byte by
+byte, and confirms every single case is caught.
+
+The one honest gap: there isn't yet a single command you can run to
+proactively scan your *entire* project history and confirm every
+protected file still unlocks correctly — today that check only happens
+one file at a time, when you actually open it. A repo-wide "check
+everything" command is a reasonable thing to add later; it doesn't exist
+yet.
+
+**Details:** [specs/securegit/13-verify.md](specs/securegit/13-verify.md)
+
 ## My team already works a certain way — is securegit still worth it?
 
 Almost certainly, but exactly how much depends on how your team already

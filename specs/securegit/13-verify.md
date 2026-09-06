@@ -40,9 +40,34 @@ pass actually built" below and [08-multi-recipient.md](08-multi-recipient.md)'s
 | L9 | Keyring or session inside the worktree | `HOME` pointed at the repository | path check |
 | L10 | Only custodial providers remain | KMS added, passphrase removed | provider check |
 | L11 | `HEAD` unsigned, or signed by a non-recipient | attribution was never provable to begin with | authenticity check (✅ `commit-signed-by-recipient`) |
+| L12 | A protected blob no longer decrypts | bit rot, a bad merge/rebase resolution, storage-layer corruption after the commit was made | **not `verify`** — see below |
 
 L4 is the one that bites in practice. Nothing fails. The commit succeeds. The
 push succeeds. The file is in CodeCommit in plaintext and will stay there.
+
+**L12 is explicitly out of scope for `verify`, and that's a scope decision,
+not an oversight: `verify` needs no key, by design (see "What this pass
+actually built" below), and confirming a blob still decrypts requires one.**
+`git fsck` doesn't cover this gap either — it audits Git's own object-graph
+structure, with no notion of what an envelope-shaped blob's *content* is
+supposed to look like; a blob holding corrupted ciphertext is a perfectly
+valid Git object to `git fsck`. What actually catches L12 is AES-256-GCM's
+own authentication tag: any corruption or tampering makes decryption
+cryptographically guaranteed to fail loudly rather than silently return
+garbage — exhaustively tested at the crypto layer (`crypto.test.ts` flips
+every byte of a ciphertext and asserts decryption throws each time;
+`filter.test.ts`'s "fails hard on a tampered envelope, even though it fails
+open on a missing key"), and reachable directly via the real, shipped
+`securegit smudge --strict -- <path>` CLI flag ([10](10-cli-contract.md)).
+What's still missing is a first-class, *proactive* way for an ordinary user
+to ask "does every protected blob in my whole history still decrypt" in one
+command — the only place that check exists today is the chaos sandbox's
+`finalIntegritySelfCheck()` (`chaos/actors/driver.mjs`), which walks every
+reachable commit and calls the real `smudge --strict` against every
+protected blob it finds, but that's test-harness code proving the property
+holds under chaos, not a packaged end-user feature. A future `securegit
+verify --decrypt-all` (needing a key, unlike every other `verify` mode
+today) is the natural shape for one; not yet built.
 
 ## Checks
 
