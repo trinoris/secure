@@ -6,32 +6,35 @@
 // ordinary, unambiguous operation — see chaos/actors/driver.mjs's
 // bootstrap comments for why that matters.
 //
-// Under SANDBOX_WORKFLOW=working-branch/pr-gated (specs/chaotests/03-orchestrator.md),
-// this also installs a `pre-receive` hook (pre-receive-check.mjs) with two
-// checks: it rejects any *update* (not creation) of `refs/heads/<BRANCH>`
-// over the ordinary git protocol — unconditionally, for every pusher,
-// since `git://` has no identity to exempt the orchestrator by — and,
-// once signing has been adopted, it also rejects a push to *any other*
-// ref (working, feature/*) containing a commit that isn't signed by a
-// fingerprint on the protected branch's own recipient list. The
-// orchestrator lands its own reviewed merges by a different, privileged
-// path instead: a direct `update-ref` against this same bare repo over a
-// shared filesystem volume (REMOTE_REPO_PATH in docker-compose.yml),
-// which never invokes `receive-pack` and so never runs this hook at all.
-// That split — network push always gated, direct filesystem access
-// reserved for the one trusted process — is the actual mechanism this
-// simulates; see 03-orchestrator.md's "Enforcing 'only the orchestrator
-// writes master'" for the real-world server-side equivalents (self-hosted
-// `pre-receive`, or github.com's required status checks) and its honest
-// limits.
+// Always installs the same `pre-receive` hook (pre-receive-check.mjs),
+// regardless of SANDBOX_WORKFLOW/SANDBOX_SIGNING — it reads both env vars
+// itself and derives two independent booleans from them
+// (specs/chaotests/03-orchestrator.md):
 //
-// SANDBOX_WORKFLOW=direct-master-signed (W4) installs the same
-// pre-receive-check.mjs, but tells it (still via this same env var) not
-// to unconditionally refuse `refs/heads/<BRANCH>` at all — direct pushes
-// to `master` are allowed exactly like plain `direct-master`, the only
-// difference is *every* ref, `master` included, is signing-checked once
-// adopted. This isolates whether signing alone, with zero review
-// workflow, is enough to stop an attacker who was never a recipient.
+//   - REFUSES_PROTECTED_REF_OUTRIGHT (from SANDBOX_WORKFLOW): true for
+//     working-branch/pr-gated, false for direct-master. When true, any
+//     *update* (not creation) of `refs/heads/<BRANCH>` over the ordinary
+//     git protocol is refused unconditionally, for every pusher, since
+//     `git://` has no identity to exempt the orchestrator by — it lands
+//     its own reviewed merges by a different, privileged path instead: a
+//     direct `update-ref` against this same bare repo over a shared
+//     filesystem volume (REMOTE_REPO_PATH in docker-compose.yml), which
+//     never invokes `receive-pack` and so never runs this hook at all.
+//   - SIGNING_CHECK_ENABLED (from SANDBOX_SIGNING): true for "advance",
+//     false for "basic". When true, every ref this hook doesn't already
+//     refuse outright must have every commit a push introduces signed by
+//     a fingerprint on the protected branch's own recipient list, or the
+//     whole push is refused.
+//
+// The four combinations that matter for direct-master/working-branch/
+// pr-gated crossed with basic/advance all fall out of these two booleans
+// without any workflow-specific branching in the hook itself — including
+// direct-master+advance (REFUSES=false, SIGNING=true: nothing refused
+// outright, but master itself is signing-checked) and direct-master+basic
+// (both false: a true no-op, identical to no hook at all). See
+// 03-orchestrator.md's "Enforcing 'only the orchestrator writes master'"
+// for the real-world server-side equivalents (self-hosted `pre-receive`,
+// or github.com's required status checks) and its honest limits.
 
 import { existsSync, writeFileSync, chmodSync } from 'node:fs';
 import { spawn, execFileSync } from 'node:child_process';
@@ -39,6 +42,7 @@ import { spawn, execFileSync } from 'node:child_process';
 const REPO_PATH = process.env.REPO_PATH ?? '/repos/repo.git';
 const BRANCH = process.env.BRANCH ?? 'main';
 const SANDBOX_WORKFLOW = process.env.SANDBOX_WORKFLOW ?? 'direct-master';
+const SANDBOX_SIGNING = process.env.SANDBOX_SIGNING ?? 'basic';
 
 if (!existsSync(REPO_PATH)) {
   execFileSync('git', ['init', '--bare', '-b', 'main', REPO_PATH], { stdio: 'inherit' });
@@ -48,26 +52,22 @@ if (!existsSync(REPO_PATH)) {
 
 const PROTECTED_REF = `refs/heads/${BRANCH}`;
 const hookPath = `${REPO_PATH}/hooks/pre-receive`;
-if (SANDBOX_WORKFLOW === 'direct-master') {
-  // W1: no gate at all — every push (including chaos-5's) lands directly,
-  // exactly as before this spec existed. An empty/absent hook is a no-op,
-  // but write one anyway (always exits 0) so a volume reused across a
-  // mode switch can't accidentally keep a stale rejecting hook around.
-  writeFileSync(hookPath, '#!/bin/sh\nexit 0\n');
-} else {
-  // `exec` (not a plain call) so the node process inherits this shell's
-  // stdin unconsumed — pre-receive-check.mjs reads the "<old> <new> <ref>"
-  // lines itself, git delivers no other input.
-  writeFileSync(hookPath, '#!/bin/sh\nexec node /chaos/remote/pre-receive-check.mjs\n');
-}
+// `exec` (not a plain call) so the node process inherits this shell's
+// stdin unconsumed — pre-receive-check.mjs reads the "<old> <new> <ref>"
+// lines itself, git delivers no other input.
+writeFileSync(hookPath, '#!/bin/sh\nexec node /chaos/remote/pre-receive-check.mjs\n');
 chmodSync(hookPath, 0o755);
-const hookDescription =
-  SANDBOX_WORKFLOW === 'direct-master'
-    ? 'is a no-op'
-    : SANDBOX_WORKFLOW === 'direct-master-signed'
+
+const refusesOutright = SANDBOX_WORKFLOW !== 'direct-master';
+const signingEnabled = SANDBOX_SIGNING === 'advance';
+const hookDescription = !refusesOutright && !signingEnabled
+  ? 'is a no-op'
+  : refusesOutright && !signingEnabled
+    ? `protects ${PROTECTED_REF} outright, no signing check`
+    : !refusesOutright && signingEnabled
       ? `enforces signing on every ref including ${PROTECTED_REF}, refuses nothing outright`
       : `protects ${PROTECTED_REF} outright, enforces signing on every other ref`;
-process.stdout.write(`[remote] SANDBOX_WORKFLOW=${SANDBOX_WORKFLOW}, pre-receive hook ${hookDescription}\n`);
+process.stdout.write(`[remote] SANDBOX_WORKFLOW=${SANDBOX_WORKFLOW}, SANDBOX_SIGNING=${SANDBOX_SIGNING}, pre-receive hook ${hookDescription}\n`);
 
 process.stdout.write(`[remote] serving ${REPO_PATH} on :9418\n`);
 

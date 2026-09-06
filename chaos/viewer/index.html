@@ -116,22 +116,47 @@
   .meta-value.tabular { font-variant-numeric: tabular-nums; }
   #sourceLabel.is-live { color: var(--warn); }
 
-  /* ---------- workflow comparison (specs/chaotests/03-orchestrator.md) ---------- */
+  /* ---------- workflow comparison (specs/chaotests/03-orchestrator.md) ----------
+     Three groups (W1/W2/W3, the review-workflow axis), each holding two
+     stacked cards (Basic/Advance, the independent signing-enforcement
+     axis) — six real, distinct modes total, never presented as four flat
+     "workflow" cards (that conflated a fourth workflow shape with what's
+     really the same shape as W1 plus a flag). */
   .wf-compare {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 14px;
   }
-  @media (max-width: 1180px) { .wf-compare { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 620px) { .wf-compare { grid-template-columns: 1fr; } }
+  @media (max-width: 900px) { .wf-compare { grid-template-columns: 1fr; } }
+  .wf-group {
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .wf-group-title {
+    font-family: var(--font-display);
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    color: var(--text);
+  }
+  .wf-group-sub {
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-bottom: 2px;
+  }
   .wf-card {
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 6px;
-    padding: 14px 16px;
+    padding: 12px 14px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
     cursor: pointer;
     transition: border-color 140ms ease;
   }
@@ -139,27 +164,28 @@
   .wf-card.active { border-color: var(--hold); box-shadow: 0 0 0 1px var(--hold); }
   .wf-card-title {
     font-family: var(--font-display);
-    font-size: 11.5px;
-    letter-spacing: 0.06em;
+    font-size: 11px;
+    letter-spacing: 0.08em;
     color: var(--text);
+    text-transform: uppercase;
   }
   .wf-card-sub {
     font-family: var(--font-body);
-    font-size: 11.5px;
+    font-size: 11px;
     color: var(--text-faint);
   }
   .wf-card-verdict {
     font-family: var(--font-mono);
-    font-size: 12.5px;
+    font-size: 12px;
     letter-spacing: 0.04em;
-    padding: 3px 0;
+    padding: 2px 0;
   }
   .wf-card.secure .wf-card-verdict { color: var(--hold); }
   .wf-card.breach .wf-card-verdict { color: var(--breach); }
   .wf-card.missing .wf-card-verdict, .wf-card.pending .wf-card-verdict { color: var(--text-faint); }
   .wf-card-detail {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 10.5px;
     color: var(--text-dim);
   }
 
@@ -458,29 +484,53 @@
   </header>
 
   <section class="wf-compare" id="wfCompare" hidden aria-label="Workflow comparison">
-    <div class="wf-card pending" id="wf-card-direct-master" data-mode="direct-master">
-      <div class="wf-card-title">W1 &middot; DIRECT TO MASTER</div>
-      <div class="wf-card-sub">no gate — anyone with push access lands directly</div>
-      <div class="wf-card-verdict" data-f="verdict">checking&hellip;</div>
-      <div class="wf-card-detail" data-f="detail"></div>
+    <div class="wf-group">
+      <div class="wf-group-title">W1 &middot; DIRECT TO MASTER</div>
+      <div class="wf-group-sub">no content review at all &mdash; anyone with push access lands directly</div>
+      <div class="wf-card pending" id="wf-card-direct-master-basic" data-mode="direct-master-basic">
+        <div class="wf-card-title">Basic</div>
+        <div class="wf-card-sub">no signing gate either</div>
+        <div class="wf-card-verdict" data-f="verdict">checking&hellip;</div>
+        <div class="wf-card-detail" data-f="detail"></div>
+      </div>
+      <div class="wf-card pending" id="wf-card-direct-master-advance" data-mode="direct-master-advance">
+        <div class="wf-card-title">Advance</div>
+        <div class="wf-card-sub">every push must be signed by a registered recipient</div>
+        <div class="wf-card-verdict" data-f="verdict">checking&hellip;</div>
+        <div class="wf-card-detail" data-f="detail"></div>
+      </div>
     </div>
-    <div class="wf-card pending" id="wf-card-working-branch" data-mode="working-branch">
-      <div class="wf-card-title">W2 &middot; SHARED WORKING BRANCH</div>
-      <div class="wf-card-sub">pushes must be signed, but aren't content-reviewed until promotion</div>
-      <div class="wf-card-verdict" data-f="verdict">checking&hellip;</div>
-      <div class="wf-card-detail" data-f="detail"></div>
+    <div class="wf-group">
+      <div class="wf-group-title">W2 &middot; SHARED WORKING BRANCH</div>
+      <div class="wf-group-sub">content reviewed only at promotion to master, not on the working branch itself</div>
+      <div class="wf-card pending" id="wf-card-working-branch-basic" data-mode="working-branch-basic">
+        <div class="wf-card-title">Basic</div>
+        <div class="wf-card-sub">no signing gate either</div>
+        <div class="wf-card-verdict" data-f="verdict">checking&hellip;</div>
+        <div class="wf-card-detail" data-f="detail"></div>
+      </div>
+      <div class="wf-card pending" id="wf-card-working-branch-advance" data-mode="working-branch-advance">
+        <div class="wf-card-title">Advance</div>
+        <div class="wf-card-sub">every push, to any ref, must be signed by a registered recipient</div>
+        <div class="wf-card-verdict" data-f="verdict">checking&hellip;</div>
+        <div class="wf-card-detail" data-f="detail"></div>
+      </div>
     </div>
-    <div class="wf-card pending" id="wf-card-pr-gated" data-mode="pr-gated">
-      <div class="wf-card-title">W3 &middot; PR-GATED MASTER</div>
-      <div class="wf-card-sub">every change reviewed by the orchestrator before master moves</div>
-      <div class="wf-card-verdict" data-f="verdict">checking&hellip;</div>
-      <div class="wf-card-detail" data-f="detail"></div>
-    </div>
-    <div class="wf-card pending" id="wf-card-direct-master-signed" data-mode="direct-master-signed">
-      <div class="wf-card-title">W4 &middot; SIGNED DIRECT MASTER</div>
-      <div class="wf-card-sub">no review at all &mdash; every push must be signed by a registered recipient</div>
-      <div class="wf-card-verdict" data-f="verdict">checking&hellip;</div>
-      <div class="wf-card-detail" data-f="detail"></div>
+    <div class="wf-group">
+      <div class="wf-group-title">W3 &middot; PR-GATED MASTER</div>
+      <div class="wf-group-sub">every change reviewed by the orchestrator before master moves</div>
+      <div class="wf-card pending" id="wf-card-pr-gated-basic" data-mode="pr-gated-basic">
+        <div class="wf-card-title">Basic</div>
+        <div class="wf-card-sub">no signing gate either</div>
+        <div class="wf-card-verdict" data-f="verdict">checking&hellip;</div>
+        <div class="wf-card-detail" data-f="detail"></div>
+      </div>
+      <div class="wf-card pending" id="wf-card-pr-gated-advance" data-mode="pr-gated-advance">
+        <div class="wf-card-title">Advance</div>
+        <div class="wf-card-sub">every push, to any ref, must be signed by a registered recipient</div>
+        <div class="wf-card-verdict" data-f="verdict">checking&hellip;</div>
+        <div class="wf-card-detail" data-f="detail"></div>
+      </div>
     </div>
   </section>
 
@@ -541,7 +591,7 @@
     <div class="resolution-detail" id="resolutionDetail"></div>
   </div>
 
-  <p class="footnote">Reads <code>chaos/report.jsonl</code> or <code>verifier-result.json</code> from a real sandbox run &mdash; see <code>specs/chaotests/01-sandbox.md</code> and, for the four-workflow comparison above, <code>specs/chaotests/03-orchestrator.md</code>. Nothing here is uploaded; the file never leaves your browser.</p>
+  <p class="footnote">Reads <code>chaos/report.jsonl</code> or <code>verifier-result.json</code> from a real sandbox run &mdash; see <code>specs/chaotests/01-sandbox.md</code> and, for the three-workflow, six-mode comparison above, <code>specs/chaotests/03-orchestrator.md</code>. Nothing here is uploaded; the file never leaves your browser.</p>
 </div>
 
 <script>
@@ -1110,7 +1160,7 @@
 
   // `prefix` is '' for a single-run publish (today's `chaos-run-*`
   // artifact shape, and still what a local double-clicked file resolves
-  // against) or '<mode>/' for one leg of the four-workflow comparison
+  // against) or '<mode>/' for one leg of the three-workflow, six-mode comparison
   // below (`.github/workflows/build-ci.yml`'s `chaos-publish` job —
   // specs/chaotests/03-orchestrator.md).
   async function tryLoadPublishedRun(prefix) {
@@ -1153,14 +1203,18 @@
     return true;
   }
 
-  // ---------- four-workflow comparison (specs/chaotests/03-orchestrator.md) ----------
-  // `chaos-publish` (.github/workflows/build-ci.yml) assembles all four
+  // ---------- three-workflow, six-mode comparison (specs/chaotests/03-orchestrator.md) ----------
+  // `chaos-publish` (.github/workflows/build-ci.yml) assembles all six
   // matrix legs' results as `<mode>/report.jsonl` + `<mode>/verifier-
   // result.json` siblings of this page. Absent entirely for a single-run
   // publish (`chaos-run-*`, this file's older shape) or a locally opened
   // file — the panel just stays hidden in that case, see loadComparison's
   // return value.
-  var MODES = ['direct-master', 'working-branch', 'pr-gated', 'direct-master-signed'];
+  var MODES = [
+    'direct-master-basic', 'direct-master-advance',
+    'working-branch-basic', 'working-branch-advance',
+    'pr-gated-basic', 'pr-gated-advance',
+  ];
 
   function setWfCard(mode, level, verdictText, detailText) {
     var card = document.getElementById('wf-card-' + mode);
@@ -1217,10 +1271,10 @@
 
   loadComparison().then(function (found) {
     if (found.length > 0) {
-      // W3 (pr-gated) is the workflow this whole comparison exists to
-      // vindicate — default to showing it, not whichever mode happens to
-      // sort first.
-      var initial = found.indexOf('pr-gated') !== -1 ? 'pr-gated' : found[0];
+      // pr-gated+advance is the combination this whole comparison exists
+      // to vindicate — default to showing it, not whichever mode happens
+      // to sort first.
+      var initial = found.indexOf('pr-gated-advance') !== -1 ? 'pr-gated-advance' : found[0];
       setActiveWfCard(initial);
       tryLoadPublishedRun(initial + '/');
       return;

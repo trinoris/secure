@@ -42,27 +42,35 @@ Full design, including exactly what the automated reviewer checks and its
 honestly-documented limits, in
 [specs/chaotests/03-orchestrator.md](specs/chaotests/03-orchestrator.md).
 
-### What actually gates each workflow, precisely
+### Two independent axes, not four workflows
 
-Two independent mechanisms are being compared here, not one — worth
-splitting apart, since it's easy to conflate "review workflow" with
-"protection":
+Review workflow (W1/W2/W3 above) and commit-signing enforcement are two
+genuinely separate mechanisms, easy to conflate as one — so the sandbox
+models them as two independent flags, `SANDBOX_WORKFLOW` and
+`SANDBOX_SIGNING` (`basic` — off, the default — or `advance`), crossed
+together: 3 workflows × 2 signing tiers = **6 real, distinct modes**, not
+three workflows plus a bolted-on fourth. `advance` requires every push —
+to every ref the workflow doesn't already refuse outright — to be signed
+by a fingerprint already on the repository's own recipient list.
 
 | | Push-time signing gate (the hook) | Content review at promotion | `verify`'s own check |
 |---|---|---|---|
-| **W1** (direct-master) | ❌ none | ❌ none (no promotion step exists) | runs, but a no-op (nobody's registered as a signer under W1) |
-| **W2** (working-branch) | ✅ yes, every ref | ✅ only at promotion (`working` → `master`) | runs, and actually enforces (signers registered) |
-| **W3** (pr-gated) | ✅ yes, every ref | ✅ at every merge, per branch, finer-grained | runs, and actually enforces |
-| **W4** (`direct-master-signed`) | ✅ yes, on `master` itself | ❌ none — no promotion step, same as W1 | enforces (signers registered) |
+| **W1** direct-master, basic | ❌ none | ❌ none (no promotion step exists) | runs, but a no-op (nobody's registered as a signer) |
+| **W1** direct-master, advance | ✅ yes, on `master` itself | ❌ none — no promotion step, same as basic | enforces (signers registered) |
+| **W2** working-branch, basic | ❌ none | ✅ only at promotion (`working` → `master`) | runs, but a no-op |
+| **W2** working-branch, advance | ✅ yes, every ref | ✅ only at promotion (`working` → `master`) | enforces |
+| **W3** pr-gated, basic | ❌ none | ✅ at every merge, per branch, finer-grained | runs, but a no-op |
+| **W3** pr-gated, advance | ✅ yes, every ref | ✅ at every merge, per branch, finer-grained | enforces |
 
 Signing is an *identity* check — is this commit from someone already
 trusted with this repository's secrets — enforced independently of
-whichever review workflow (or lack of one) a team runs on top of it. W4
-isolates that question on its own: does signing alone stop an attacker
-with zero review process at all? **Confirmed locally: yes** — a real run
-watched all of the attacker's attempts refused directly on `master`
-itself, finishing with zero plaintext violations. Try it:
-`SANDBOX_WORKFLOW=direct-master-signed npm run chaos:sandbox`.
+whichever review workflow (or lack of one) a team runs on top of it.
+direct-master+advance isolates that question on its own: does signing
+alone stop an attacker with zero review process at all? **Confirmed
+locally: yes** — a real run watched all of the attacker's attempts
+refused directly on `master` itself, finishing with zero plaintext
+violations. Try it:
+`SANDBOX_WORKFLOW=direct-master SANDBOX_SIGNING=advance npm run chaos:sandbox`.
 
 ## What real runs actually found
 
@@ -88,17 +96,18 @@ folded into the same claim:
   branch everyone reads and writes is already visible to anyone with
   ordinary read access to the remote the moment anything lands on it —
   long before a promotion review ever runs.
-- **Since then, locally (not yet re-confirmed on GitHub Actions): commit
-  signing closes that gap.** Once every push — not just the promotion —
-  requires a signature from a registered recipient, a local Docker run
-  watched the attacker's own attribute-downgrade attempt get refused
-  directly at `working` itself, finishing with zero plaintext violations.
-  Flagged as local-only deliberately: the fix is built and the mechanism
-  is understood, but "confirmed on real GitHub Actions infrastructure" is
-  a claim earned by actually running there, not assumed from a local pass
-  — the next scheduled or dispatched `chaos` job run is what would earn
-  it. W1 still leaks either way — signing isn't enabled there (see the
-  table above and W4).
+- **Since then, locally (not yet re-confirmed on GitHub Actions): the
+  `advance` signing tier closes that gap, for both W1 and W2.** Once
+  every push — not just the promotion — requires a signature from a
+  registered recipient, local Docker runs watched the attacker's own
+  attribute-downgrade attempts get refused directly (on `working` for
+  W2+advance, on `master` itself for W1+advance), each finishing with
+  zero plaintext violations. Flagged as local-only deliberately: the fix
+  is built and the mechanism is understood, but "confirmed on real
+  GitHub Actions infrastructure" is a claim earned by actually running
+  there, not assumed from a local pass — the next scheduled or
+  dispatched `chaos` job run is what would earn it. The `basic` tier of
+  either workflow still leaks, by design (see the table above).
 - The live comparison — the actual current numbers, not last session's —
   is published every night: see "Watch it live" below.
 
@@ -106,10 +115,11 @@ folded into the same claim:
 
 [![Chaos Match Viewer](https://img.shields.io/badge/chaos%20sandbox-live%20replay-3ecf8e)](https://trinoris.github.io/securegit/)
 
-`.github/workflows/build-ci.yml`'s `chaos` job runs all four workflows as
-a real, several-minute campaign every night (and on demand via
-`workflow_dispatch`), and publishes the result as a GitHub Pages site: a
-side-by-side verdict for W1/W2/W3/W4, and a full match replay — friendly
+`.github/workflows/build-ci.yml`'s `chaos` job runs all six modes (three
+workflows × two signing tiers) as a real, several-minute campaign every
+night (and on demand via `workflow_dispatch`), and publishes the result
+as a GitHub Pages site: a side-by-side verdict grouped by workflow, each
+with a Basic/Advance pair, and a full match replay — friendly
 collaborators, hostile contacts, a live commit log, three invariant gauges
 resolving at the end — for whichever one you pick.
 
@@ -119,12 +129,13 @@ resolving at the end — for whichever one you pick.
 npm run chaos:sandbox
 ```
 
-Runs `direct-master` by default. Compare a different workflow:
+Runs `direct-master` + `basic` by default. Compare a different combination:
 
 ```sh
 SANDBOX_WORKFLOW=working-branch npm run chaos:sandbox
 SANDBOX_WORKFLOW=pr-gated npm run chaos:sandbox
-SANDBOX_WORKFLOW=direct-master-signed npm run chaos:sandbox   # W4
+SANDBOX_WORKFLOW=direct-master SANDBOX_SIGNING=advance npm run chaos:sandbox
+SANDBOX_WORKFLOW=working-branch SANDBOX_SIGNING=advance npm run chaos:sandbox
 ```
 
 See [chaos/README.md](chaos/README.md) for prerequisites, the exact

@@ -31,21 +31,20 @@ const SHARED_READY = join(SHARED_DIR, 'bootstrap-ready');
 const BRANCH = process.env.BRANCH ?? 'main';
 const DURATION_SECONDS = Number(process.env.CHAOS_DURATION_SECONDS ?? 300);
 const HOME = process.env.HOME;
-// direct-master (W1) | working-branch (W2) | pr-gated (W3) —
-// specs/chaotests/03-orchestrator.md.
+// Two orthogonal axes (specs/chaotests/03-orchestrator.md): which of the
+// three real git workflows (W1 direct-master, W2 working-branch, W3
+// pr-gated) gates *content* — review, branch isolation, attribute checks
+// — and, independently, whether that workflow's own pre-receive hook also
+// enforces commit signing ("basic" — off, today's plain behavior — or
+// "advance" — every push, to every ref, must be signed by a registered
+// recipient). Previously modeled as a fourth workflow value
+// (`direct-master-signed`) bolted onto direct-master specifically; that
+// was really just direct-master with the signing flag on, and the same
+// flag applies just as well to working-branch/pr-gated — hence the split
+// into two independent env vars instead of a fourth workflow name.
 const WORKFLOW = process.env.SANDBOX_WORKFLOW ?? 'direct-master';
-// Registering collaborator-a/b as signing recipients (chaos-5 deliberately
-// excluded) only matters where something actually checks a signature —
-// plain direct-master's pre-receive hook is an unconditional no-op
-// (remote/entrypoint.mjs), so there's nothing there for signing to
-// harden, and enabling it anyway would just make every ordinary commit
-// fail `verify`'s own commit-signed-by-recipient check for no protective
-// benefit. `direct-master-signed` (W4) is the deliberate exception — same
-// no-promotion-step shape as direct-master, but with signing enforced
-// directly on `master`, to isolate whether signing alone stops an
-// attacker with zero review process at all. See 03-orchestrator.md's
-// "Since then" note for why this exists.
-const SIGNING_ENABLED = WORKFLOW !== 'direct-master';
+const SANDBOX_SIGNING = process.env.SANDBOX_SIGNING ?? 'basic';
+const SIGNING_ENABLED = SANDBOX_SIGNING === 'advance';
 const SHARED_IDENTITY = (role) => join(SHARED_DIR, `identity-${role}.json`);
 // Only set (and only meaningful) for the operator under working-branch/
 // pr-gated — see `landReviewedMerge()`.
@@ -58,10 +57,9 @@ const GITATTRIBUTES_PATH = join(WORK_DIR, '.gitattributes');
 
 /**
  * Where a non-orchestrator role's own edits land. Under `direct-master`
- * and `direct-master-signed` (W4 — same shape, no promotion step, no
- * orchestrator review; W4 additionally requires every commit signed by a
- * registered recipient, enforced at push time) this *is* `BRANCH`; under
- * the other two, `master` never accepts a direct update at all
+ * this *is* `BRANCH` (no promotion step, no orchestrator review, in
+ * either signing tier — see SANDBOX_SIGNING above); under the other two,
+ * `master` never accepts a direct update at all
  * (chaos/remote/entrypoint.mjs's pre-receive hook) — every push instead
  * targets a branch the orchestrator later reviews. `working-branch` (W2)
  * shares one ref between both collaborators (and chaos-5); `pr-gated`
@@ -71,7 +69,7 @@ const GITATTRIBUTES_PATH = join(WORK_DIR, '.gitattributes');
  * contributing.
  */
 function targetRef() {
-  if (WORKFLOW === 'direct-master' || WORKFLOW === 'direct-master-signed') return BRANCH;
+  if (WORKFLOW === 'direct-master') return BRANCH;
   if (WORKFLOW === 'working-branch') return 'working';
   return `feature/${ROLE}`;
 }
@@ -196,13 +194,14 @@ async function registerSigningRecipients() {
   await git(['add', '.securegit/recipients'], { cwd: WORK_DIR, env: gitEnv() });
   const commit = await git(['commit', '-m', 'bootstrap: register collaborator-a and collaborator-b as signing recipients'], { cwd: WORK_DIR, env: gitEnv() });
   await record('action', 'commit signing recipients', commit);
-  // W4 (direct-master-signed) accepts ordinary pushes to BRANCH — a
-  // regular `git push` lands this fine (recipientCount is still 0 at the
-  // instant this exact commit is evaluated, so the no-op tier passes it
-  // regardless of signing, same as every other workflow's first-ever
-  // registration commit). W2/W3 refuse any BRANCH update outright, so
-  // this needs the same privileged path the orchestrator's own merges use.
-  if (WORKFLOW === 'direct-master-signed') {
+  // direct-master (either signing tier) accepts ordinary pushes to
+  // BRANCH — a regular `git push` lands this fine (recipientCount is
+  // still 0 at the instant this exact commit is evaluated, so the no-op
+  // tier passes it regardless of signing, same as every other workflow's
+  // first-ever registration commit). working-branch/pr-gated refuse any
+  // BRANCH update outright regardless of signing tier, so this needs the
+  // same privileged path the orchestrator's own merges use.
+  if (WORKFLOW === 'direct-master') {
     // Unlike every other landing in this file, this one has no later
     // round to retry it — collaborator-a/b are pushing their own ordinary
     // round commits to the exact same ref concurrently the whole time, so
@@ -893,7 +892,7 @@ async function main() {
     round += 1;
     try {
       if (ROLE === 'operator') {
-        if (WORKFLOW === 'direct-master' || WORKFLOW === 'direct-master-signed') {
+        if (WORKFLOW === 'direct-master') {
           await operatorRound(round);
         } else {
           await orchestratorReviewRound(round);

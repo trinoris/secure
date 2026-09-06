@@ -1,32 +1,38 @@
 #!/usr/bin/env node
-// The full `pre-receive` hook for every SANDBOX_WORKFLOW except plain
-// `direct-master` (specs/chaotests/03-orchestrator.md, "Enforcing 'only
+// The full `pre-receive` hook, installed unconditionally for every
+// SANDBOX_WORKFLOW (specs/chaotests/03-orchestrator.md, "Enforcing 'only
 // the orchestrator writes master'" and its signing-check extension). Two
-// independent checks, both unconditional for every network pusher — there
-// is still no pusher *identity* here (git:// has none to check), only ref
-// names and the commits' own embedded signatures:
+// independent checks, each driven by its own env var, both unconditional
+// for every network pusher — there is still no pusher *identity* here
+// (git:// has none to check), only ref names and the commits' own
+// embedded signatures:
 //
-//   1. For working-branch/pr-gated: refuse any *update* (not creation) of
-//      the protected branch, always — unchanged from the original hook.
-//      The orchestrator lands its own reviewed merges through a
-//      different, privileged filesystem path (`update-ref`, driver.mjs's
-//      landReviewedMerge()) that never invokes receive-pack and so never
-//      runs this hook at all. `direct-master-signed` (W4) deliberately
-//      does *not* apply this rule at all — see
-//      REFUSES_PROTECTED_REF_OUTRIGHT below.
-//   2. NEW: for every ref this workflow doesn't outright refuse (working,
-//      feature/*, and under W4, `master` itself) — left completely
-//      unchecked by the original hook, which is exactly the gap that let
-//      chaos-5's T1 attribute-downgrade attack sit on `working`,
-//      unsigned and undetected, for the rest of a run (see that spec's
-//      "Since then" note) — every commit this push introduces must be
-//      signed by a fingerprint already on the protected branch's own
-//      recipient list, or the whole push is refused. This needs no
-//      pusher identity either: `%GF` resolves a commit's real signer
-//      straight from its own embedded signature, independent of how it
-//      arrived, so a hostile pusher can't opt out of it by pushing
-//      "as" anyone — they simply can't produce a valid signature under a
-//      key that was never registered.
+//   1. From SANDBOX_WORKFLOW: for working-branch/pr-gated, refuse any
+//      *update* (not creation) of the protected branch, always —
+//      unchanged from the original hook. The orchestrator lands its own
+//      reviewed merges through a different, privileged filesystem path
+//      (`update-ref`, driver.mjs's landReviewedMerge()) that never
+//      invokes receive-pack and so never runs this hook at all.
+//      direct-master (either signing tier) deliberately does *not* apply
+//      this rule at all — see REFUSES_PROTECTED_REF_OUTRIGHT below.
+//   2. From SANDBOX_SIGNING: "basic" (the default) runs no signing check
+//      at all, on any ref — the original, pre-signing behavior. "advance"
+//      requires every commit a push introduces, on every ref this hook
+//      doesn't already refuse outright, to be signed by a fingerprint
+//      already on the protected branch's own recipient list, or the
+//      whole push is refused. This closes the exact gap that let
+//      chaos-5's T1 attribute-downgrade attack sit on `working`, unsigned
+//      and undetected, for the rest of a run under working-branch+basic
+//      (see that spec's "Since then" note) — and needs no pusher identity
+//      either: `%GF` resolves a commit's real signer straight from its
+//      own embedded signature, independent of how it arrived, so a
+//      hostile pusher can't opt out of it by pushing "as" anyone — they
+//      simply can't produce a valid signature under a key that was never
+//      registered.
+//
+// These two checks are genuinely independent — direct-master+advance has
+// no ref refused outright but every commit signing-checked; working-
+// branch+basic refuses `master` updates but signing-checks nothing.
 //
 // Reuses this project's own real code directly — /app/dist is baked into
 // this same shared image (chaos/Dockerfile), exactly like
@@ -41,6 +47,7 @@ import { equalCt } from '/app/dist/crypto.js';
 const REPO_PATH = process.env.REPO_PATH ?? '/repos/repo.git';
 const BRANCH = process.env.BRANCH ?? 'main';
 const SANDBOX_WORKFLOW = process.env.SANDBOX_WORKFLOW ?? 'direct-master';
+const SANDBOX_SIGNING = process.env.SANDBOX_SIGNING ?? 'basic';
 const PROTECTED_REF = `refs/heads/${BRANCH}`;
 const ZERO_SHA = '0'.repeat(40);
 
@@ -129,12 +136,15 @@ function newCommits(oldSha, newSha) {
   }
 }
 
-// W4 (direct-master-signed) deliberately does *not* refuse updates to
-// PROTECTED_REF at all — it isolates whether signing alone, with no
-// promotion step and no orchestrator, is enough on its own. Every other
-// signing-enabled workflow (working-branch, pr-gated) still refuses any
-// direct update to PROTECTED_REF unconditionally, exactly as before.
-const REFUSES_PROTECTED_REF_OUTRIGHT = SANDBOX_WORKFLOW !== 'direct-master-signed';
+// direct-master (either signing tier) deliberately never refuses updates
+// to PROTECTED_REF at all — it has no promotion step, no orchestrator, by
+// definition. working-branch/pr-gated always refuse any direct update to
+// PROTECTED_REF unconditionally, regardless of SANDBOX_SIGNING.
+const REFUSES_PROTECTED_REF_OUTRIGHT = SANDBOX_WORKFLOW !== 'direct-master';
+// "basic" (the default) never runs the signing check at all, on any ref —
+// the original, pre-signing behavior, preserved exactly as an explicit
+// opt-out rather than something only direct-master could ever have.
+const SIGNING_CHECK_ENABLED = SANDBOX_SIGNING === 'advance';
 
 const lines = readFileSync(0, 'utf8').trim().split('\n').filter(Boolean);
 let status = 0;
@@ -152,6 +162,8 @@ for (const line of lines) {
     }
     continue;
   }
+
+  if (!SIGNING_CHECK_ENABLED) continue; // "basic" tier — no signing check on any ref
 
   if (signingTier === null) signingTier = registeredFingerprints();
   if (signingTier.recipientCount < 2 || signingTier.registered.length === 0) continue; // not yet adopted

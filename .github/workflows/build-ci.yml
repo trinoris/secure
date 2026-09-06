@@ -37,20 +37,19 @@ jobs:
     - run: npm test
 
   # Runs the Docker Compose chaos sandbox (chaos/docker-compose.yml, see
-  # specs/chaotests/01-sandbox.md) once per git workflow this project
-  # models (specs/chaotests/03-orchestrator.md): direct-master (W1, no
-  # gate at all), working-branch (W2, gated only at the promotion to
-  # master), pr-gated (W3, every change reviewed before master ever
-  # moves), direct-master-signed (W4, no review workflow at all, but every
-  # push must be signed by a registered recipient — isolates whether
-  # signing alone stops an attacker with zero review process). Each is its
-  # own matrix leg, `fail-fast: false` — W1, W2, and W4 are all still
-  # newer/less battle-tested than W3's own long confirmation history, so
-  # none of them fail the job on their own the way `pr-gated` does (see
-  # the "Check whether a hard invariant was violated" step below), and one
-  # mode's expected red must never cancel the others mid-run. `chaos-
-  # publish` (below) assembles all four legs' results into one Pages
-  # site regardless of which legs failed.
+  # specs/chaotests/01-sandbox.md) once per combination of two independent
+  # axes this project models (specs/chaotests/03-orchestrator.md):
+  #   - workflow: direct-master (W1, no gate at all), working-branch (W2,
+  #     gated only at the promotion to master), pr-gated (W3, every change
+  #     reviewed before master ever moves)
+  #   - signing: basic (off, the original pre-signing behavior) | advance
+  #     (every push, to every ref the workflow doesn't already refuse
+  #     outright, must be signed by a registered recipient)
+  # GitHub Actions crosses two matrix arrays automatically — 3 x 2 = 6
+  # real, distinct legs, `fail-fast: false` since one leg's expected red
+  # must never cancel the others mid-run. `chaos-publish` (below)
+  # assembles all six legs' results into one Pages site regardless of
+  # which legs failed.
   #
   # Deliberately nightly + manual only, never on push/PR: this is a several-
   # minute, fuzzing-campaign-style run ("reported, not scored" per
@@ -65,16 +64,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        workflow: [direct-master, working-branch, pr-gated, direct-master-signed]
+        workflow: [direct-master, working-branch, pr-gated]
+        signing: [basic, advance]
     env:
       CHAOS_DURATION_SECONDS: 180
       VERIFIER_STARTUP_GRACE_SECONDS: 20
       VERIFIER_SETTLE_SECONDS: 60
       SANDBOX_WORKFLOW: ${{ matrix.workflow }}
+      SANDBOX_SIGNING: ${{ matrix.signing }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Run the chaos sandbox (${{ matrix.workflow }})
+      - name: Run the chaos sandbox (${{ matrix.workflow }}, ${{ matrix.signing }})
         run: |
           docker compose -f chaos/docker-compose.yml up --build -d
           # `wait` exits with verifier's own exit code — a hard-invariant
@@ -102,12 +103,12 @@ jobs:
       # Always publish, pass or fail — a violation is exactly the
       # interesting result this exists to surface, not one to hide.
       # A plain (non-Pages) artifact per leg — `chaos-publish` assembles
-      # all three into the one site actually deployed.
-      - name: Upload this workflow's raw run artifacts (report, audit, logs)
+      # all six into the one site actually deployed.
+      - name: Upload this leg's raw run artifacts (report, audit, logs)
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: chaos-result-${{ matrix.workflow }}-${{ github.run_id }}
+          name: chaos-result-${{ matrix.workflow }}-${{ matrix.signing }}-${{ github.run_id }}
           path: |
             site/report.jsonl
             site/verifier-result.json
@@ -122,21 +123,26 @@ jobs:
       # shape" table for which legs are expected to fail. Job status here
       # is "did the sandbox produce a trustworthy result", not "did an
       # invariant hold" — those are the same question only for `pr-gated`,
-      # the one workflow with a review gate at all. direct-master/
-      # working-branch violating an invariant is the expected,
-      # unsurprising result of having no gate (specs/chaotests/
-      # 03-orchestrator.md's whole comparison exists to show exactly
-      # that) — real data for the viewer to display, not a build failure
-      # to page anyone over. `pr-gated` failing this check is the one
-      # genuinely alarming case: it's the mode this project claims should
-      # never violate an invariant, so a violation there is a real
+      # the one workflow with a review gate at all, in *either* signing
+      # tier: branch isolation and content review already make it hold on
+      # their own (pr-gated+basic, this project's original, long-confirmed
+      # finding), and pr-gated+advance only adds defense-in-depth on top
+      # of that, never removes it. Every other combination violating an
+      # invariant is the expected, unsurprising result of having no
+      # content-review gate (specs/chaotests/03-orchestrator.md's whole
+      # comparison exists to show exactly that) — real data for the
+      # viewer to display, not a build failure to page anyone over.
+      # `pr-gated` failing this check, in either signing tier, is the one
+      # genuinely alarming case: it's the combination this project claims
+      # should never violate an invariant, so a violation there is a real
       # regression in the review logic, and stays a hard job failure.
-      # `direct-master-signed` (W4) is deliberately kept in the warning
-      # tier alongside W1/W2 for now, not promoted to `pr-gated`'s hard-
-      # failure tier — every local run so far has held clean, but it
-      # hasn't earned the same real-run confirmation history yet
-      # (specs/chaotests/03-orchestrator.md's own "Since then" note is
-      # explicit that this is local-only so far); revisit once it has.
+      # The four non-pr-gated legs (direct-master and working-branch,
+      # crossed with both signing tiers) all stay in the warning tier —
+      # the "advance" legs among them are newer and less battle-tested
+      # than pr-gated's own long confirmation history (every local run so
+      # far has held clean, per specs/chaotests/03-orchestrator.md's
+      # "Since then" note, but that's local-only so far); revisit once
+      # they've earned the same real-run history.
       - name: Check whether a hard invariant was violated
         if: always()
         run: |
@@ -148,16 +154,16 @@ jobs:
           echo "hardInvariantsHeld=$held"
           if [ "$held" != "true" ]; then
             if [ "${{ matrix.workflow }}" = "pr-gated" ]; then
-              echo "::error::A hard invariant was violated under pr-gated — this is the one workflow expected to always hold; see the deployed viewer or verifier.log for what actually happened."
+              echo "::error::A hard invariant was violated under pr-gated (${{ matrix.signing }}) — this is the one workflow expected to always hold; see the deployed viewer or verifier.log for what actually happened."
               exit 1
             fi
-            echo "::warning::A hard invariant was violated under ${{ matrix.workflow }} — expected for a workflow with no review gate; see the deployed viewer for the actual result, this job's status intentionally doesn't reflect it."
+            echo "::warning::A hard invariant was violated under ${{ matrix.workflow }} (${{ matrix.signing }}) — expected for a combination with no content-review gate; see the deployed viewer for the actual result, this job's status intentionally doesn't reflect it."
           fi
 
-  # Assembles all four matrix legs' results into one site and publishes
-  # it — `if: always()` because W1/W2/W4 failing their own invariant check
-  # above is the expected, interesting result this whole comparison
-  # exists to surface, never a reason to skip publishing it.
+  # Assembles all six matrix legs' results into one site and publishes it
+  # — `if: always()` because every non-pr-gated leg failing its own
+  # invariant check above is the expected, interesting result this whole
+  # comparison exists to surface, never a reason to skip publishing it.
   chaos-publish:
     needs: chaos
     # `chaos` itself only runs on schedule/workflow_dispatch (see its own
@@ -186,26 +192,29 @@ jobs:
         run: |
           mkdir -p site
           cp chaos/viewer/index.html site/index.html
-          for workflow in direct-master working-branch pr-gated direct-master-signed; do
-            mkdir -p "site/$workflow"
-            src="downloaded/chaos-result-$workflow-${{ github.run_id }}"
-            if [ -d "$src" ]; then
-              # The uploading step (matrix leg's "Upload this workflow's raw
-              # run artifacts") lists `site/report.jsonl` and
-              # `site/verifier-result.json` alongside a *sibling*
-              # `verifier.log` (not under `site/`) — upload-artifact takes
-              # the common ancestor of all listed paths as the archive
-              # root, which is the workspace root here (verifier.log isn't
-              # under site/), so the downloaded artifact keeps the `site/`
-              # prefix rather than flattening it away. Confirmed by a real
-              # run (33955584166) where this cp silently found nothing
-              # (redirected to /dev/null) and every mode's page loaded an
-              # empty comparison.
-              cp "$src"/site/report.jsonl "site/$workflow/report.jsonl" 2>/dev/null || true
-              cp "$src"/site/verifier-result.json "site/$workflow/verifier-result.json" 2>/dev/null || true
-            else
-              echo "::warning::no results downloaded for workflow=$workflow (that matrix leg likely never completed the 'Run the chaos sandbox' step)"
-            fi
+          for workflow in direct-master working-branch pr-gated; do
+            for signing in basic advance; do
+              mode="$workflow-$signing"
+              mkdir -p "site/$mode"
+              src="downloaded/chaos-result-$mode-${{ github.run_id }}"
+              if [ -d "$src" ]; then
+                # The uploading step (matrix leg's "Upload this leg's raw
+                # run artifacts") lists `site/report.jsonl` and
+                # `site/verifier-result.json` alongside a *sibling*
+                # `verifier.log` (not under `site/`) — upload-artifact takes
+                # the common ancestor of all listed paths as the archive
+                # root, which is the workspace root here (verifier.log isn't
+                # under site/), so the downloaded artifact keeps the `site/`
+                # prefix rather than flattening it away. Confirmed by a real
+                # run (33955584166) where this cp silently found nothing
+                # (redirected to /dev/null) and every mode's page loaded an
+                # empty comparison.
+                cp "$src"/site/report.jsonl "site/$mode/report.jsonl" 2>/dev/null || true
+                cp "$src"/site/verifier-result.json "site/$mode/verifier-result.json" 2>/dev/null || true
+              else
+                echo "::warning::no results downloaded for $mode (that matrix leg likely never completed the 'Run the chaos sandbox' step)"
+              fi
+            done
           done
 
       - name: Configure Pages

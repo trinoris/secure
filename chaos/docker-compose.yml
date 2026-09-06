@@ -30,6 +30,16 @@ x-common-env: &common-env
   # every non-orchestrator push through a branch `master` never accepts
   # updates to directly (remote/entrypoint.mjs's pre-receive hook).
   SANDBOX_WORKFLOW: ${SANDBOX_WORKFLOW:-direct-master}
+  # basic (default) | advance — independent of SANDBOX_WORKFLOW above.
+  # "advance" requires every push, on every ref the workflow doesn't
+  # already refuse outright, to be signed by a fingerprint on the
+  # protected branch's own recipient list (chaos/remote/pre-receive-check.mjs).
+  # Crossed with all three workflows this gives six real, distinct modes —
+  # e.g. SANDBOX_WORKFLOW=direct-master + SANDBOX_SIGNING=advance is what
+  # was previously modeled as a separate `direct-master-signed` (W4)
+  # workflow value; that's now just this same flag applied to any of the
+  # three, not a fourth workflow name.
+  SANDBOX_SIGNING: ${SANDBOX_SIGNING:-basic}
 
 services:
   remote:
@@ -43,6 +53,7 @@ services:
       REPO_PATH: /repos/repo.git
       BRANCH: main
       SANDBOX_WORKFLOW: ${SANDBOX_WORKFLOW:-direct-master}
+      SANDBOX_SIGNING: ${SANDBOX_SIGNING:-basic}
     volumes:
       # Also mounted (read-write) on `operator` under working-branch/
       # pr-gated, so it can land a reviewed merge via a direct `git

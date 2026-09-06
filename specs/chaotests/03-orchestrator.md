@@ -207,40 +207,51 @@ claimed here.
 | W1 | Direct push to `master` | No review, no CI gate — small teams, early-stage repos, personal projects, or any self-hosted `git` server nobody has configured protection on | Anyone with push access, unconditionally | [01](01-sandbox.md) (today's default, unchanged by this spec) |
 | W2 | Direct push to a shared working branch, gated promotion to `master` | GitFlow's `develop`, a team's `staging`/`integration` branch — fast, low-ceremony collaboration on the working branch, a reviewed release/promotion step onto `master` | Anyone, on the working branch; only the promotion step, on `master` | This spec, §"Workflow W2" |
 | W3 | Pull request against a protected `master`, required status checks | GitHub/GitLab/Bitbucket's standard model: `git push origin feature/x`, open a PR, checks run, a human or a required check approves, *then* it merges — this repository's own `master` is set up exactly this way (`.github/workflows/{codeql,gitleaks}.yml` as required checks) | Only the merge action itself, never a direct push | This spec, §"Workflow W3" |
-| W4 | Direct push to `master`, no review workflow at all, but every push signature-checked | A self-hosted server with branch protection rules that require signed, recipient-registered commits but no PR/review requirement — GitHub's own "require signed commits" is independent of "require PR reviews", so this is a real, standalone configuration some teams run, not a hybrid this spec invented | Anyone with push access, but only if their commit is signed by a registered recipient | This spec, §"Workflow W4" |
 
 W1 is already fully built and already empirically measured (the 28-
 violation run cited above). This spec's job for W1 is precise naming, not
 new work — see [01](01-sandbox.md) and [16](../securegit/16-adversarial-integrity.md)
 for everything about it.
 
-### Workflow W4 — signing alone, no review workflow (✅ built, confirmed live)
+### The signing axis: `SANDBOX_SIGNING` (✅ built, confirmed live)
 
 W1 and W2's shared root cause (T1's downgrade landing on a shared branch
-before any review can run) and the pre-receive signing hook that closed it
-for W2 together raise an obvious question W2/W3 alone don't answer:
-**does signing enforcement need a review workflow underneath it at all, or
-does it stand on its own?** `SANDBOX_WORKFLOW=direct-master-signed`
-isolates exactly that — same shape as `direct-master` (no promotion step,
-no orchestrator, collaborators push straight to `master`), but
-`pre-receive-check.mjs` applies its signing check to `master` itself
-instead of refusing every update to it outright.
+before any review can run) raises a question the three workflows above
+don't answer on their own: **does closing that gap need a review
+workflow underneath it at all, or does commit signing stand on its own?**
+`SANDBOX_SIGNING` (`basic` — off, the default; `advance` — every push, to
+every ref the workflow doesn't already refuse outright, must be signed by
+a registered recipient) answers it by being a **second, independent axis
+crossed with all three workflows above**, not a fourth workflow — 3 × 2 =
+6 real, distinct modes. `direct-master`+`advance` is the sharpest case:
+same shape as `direct-master`+`basic` (no promotion step, no orchestrator,
+collaborators push straight to `master`), but `pre-receive-check.mjs`
+applies its signing check to `master` itself instead of refusing every
+update to it outright, isolating whether signing alone stops an attacker
+with zero review process.
 
-Three real bugs found building this, none of them about the signing
-mechanism itself (already proven correct by W2/W3) — all about wiring it
-into a shape the hook had never run against before:
+This was originally built and shipped as a fourth workflow value
+(`direct-master-signed`), then correctly identified as the wrong shape —
+folding it into `direct-master` plus a flag is what makes the same flag
+apply to `working-branch`/`pr-gated` too, rather than needing a `-signed`
+variant of every workflow name.
+
+Four real bugs found building this, none of them about the signing
+mechanism itself (already proven correct by the original W2 fix) — all
+about wiring it into shapes the hook and the sandbox's own plumbing had
+never run against before:
 
 - `chaos/agents/attacker.mjs` computes its own `TARGET_REF` independently
-  of `driver.mjs`, and its ternary had no branch for the new workflow
-  value — chaos-5 kept pushing to `feature/chaos-5-attacker` (the
+  of `driver.mjs`, and its ternary had no branch for `direct-master`+
+  `advance` — chaos-5 kept pushing to `feature/chaos-5-attacker` (the
   pr-gated shape) instead of `master` directly, silently testing the
   wrong ref entirely. Fixed by extending the same condition
   `driver.mjs`'s own `targetRef()` already uses.
-- `registerSigningRecipients()`'s W4 landing path is a bare `git push
-  origin BRANCH` (no privileged path needed — `master` accepts ordinary
-  pushes under W4) — but with collaborator-a/b *also* pushing their own
-  round commits to that identical ref concurrently from the first moment
-  the run starts, the very first real run lost that race
+- `registerSigningRecipients()`'s `direct-master` landing path is a bare
+  `git push origin BRANCH` (no privileged path needed — `master` accepts
+  ordinary pushes there) — but with collaborator-a/b *also* pushing their
+  own round commits to that identical ref concurrently from the first
+  moment the run starts, the very first real run lost that race
   ("`! [rejected] main -> main (fetch first)`") with no later round ever
   retrying it, permanently leaving signing unregistered — every
   subsequent chaos-5 attack for the rest of that run went through
@@ -256,32 +267,52 @@ into a shape the hook had never run against before:
   chaos-5's own log showed all 16 attack attempts refused, zero landed.
   Fixed by filtering out the two labels (`collaborator-a`,
   `collaborator-b`) this sandbox ever legitimately creates — this also
-  silently affected every prior W2/W3 confirmation in this document,
-  re-verified clean (`hostile recipient files on remote: 0`) after the fix.
+  silently affected every prior `advance`-tier confirmation in this
+  document, re-verified clean (`hostile recipient files on remote: 0`)
+  after the fix.
+- Splitting the fourth workflow value into a real `SANDBOX_SIGNING` env
+  var required adding it to `chaos/docker-compose.yml` in two places: the
+  shared `x-common-env` anchor (inherited by collaborator-a/b and the
+  operator via `<<: *common-env`) *and*, separately, `remote`'s own
+  service block, which hand-curates its environment rather than using
+  that anchor — confirmed missed the first time by a real regression run:
+  `direct-master`+`advance`, previously holding clean at 0 violations,
+  started leaking again (15 violations, 3 hostile recipients) purely
+  because `remote`'s container never received `SANDBOX_SIGNING` at all,
+  silently falling back to its own `basic` default inside
+  `entrypoint.mjs` regardless of what the operator/collaborators thought
+  they'd requested.
 
-**Confirmed by a real local chaos run** (not yet the GitHub Actions job —
-see the note on that distinction elsewhere in this document): all 16 of
-chaos-5's attack attempts refused (`refusing push to refs/heads/main —
-commit ... is not signed`), `noPlaintextLeaked: HELD` with 0 violations,
-`hostile recipient files on remote: 0`, 0 script-level errors, every
-collaborator/operator round completed. Signing alone, with zero review
-process, fully stops an attacker who was never a recipient — the review
-workflow (W1 vs. W2 vs. W3) and the signing gate are genuinely
-independent axes, not one dimension.
+**Confirmed by real local chaos runs** (not yet the GitHub Actions job —
+see the note on that distinction elsewhere in this document), one per new
+combination: `working-branch`+`basic` reproduces the original leak
+exactly (57 violations, matching the pre-signing baseline); `pr-gated`+
+`basic` still holds clean (0 violations) on branch isolation and content
+review alone, no signing needed; `direct-master`+`advance` and
+`working-branch`+`advance` both hold clean (0 violations, 0 hostile
+recipients) after the docker-compose fix above. Signing and review
+workflow are genuinely independent axes — a repository can have either,
+neither, or both.
 
-**Since then: wired into the GitHub Actions matrix and the viewer.**
-`.github/workflows/build-ci.yml`'s `chaos` job's matrix is now
-`[direct-master, working-branch, pr-gated, direct-master-signed]` (four
-legs, not three — the earlier "runs all three as a `fail-fast: false`
-matrix" language above describes this spec's original W1/W2/W3
-confirmation specifically, not the matrix as it stands today), and
-`chaos/viewer/index.html` has a fourth `wf-card` and `MODES` entry for it.
-Kept in the same warning tier as W1/W2 in the "hard invariant violated"
-check, not promoted to `pr-gated`'s hard-failure tier — every local run so
-far has held clean, but it hasn't earned `pr-gated`'s own multi-run
-GitHub Actions confirmation history yet. Also renamed the workflow file
-itself, `.github/workflows/node.js.yml` → `build-ci.yml`, matching its
-own `name: Build CI` — every reference to the old filename across this
+**Since then: wired into the GitHub Actions matrix and the viewer as the
+real 3×2 shape, not a fourth workflow.** `.github/workflows/build-ci.yml`'s
+`chaos` job now crosses two matrix arrays, `workflow: [direct-master,
+working-branch, pr-gated]` × `signing: [basic, advance]` — GitHub Actions
+computes the cross product automatically, six real legs — and
+`chaos/viewer/index.html` groups its six `wf-card`s into three `wf-group`s
+(one per workflow), each holding a Basic/Advance pair, rather than six (or
+four) flat cards. `pr-gated` stays the only hard-failure tier in the
+"hard invariant violated" check, in *either* signing tier — branch
+isolation and content review already make `pr-gated`+`basic` hold on
+their own (this project's original, long-confirmed finding), and
+`pr-gated`+`advance` only adds defense-in-depth on top of that. The four
+non-pr-gated combinations all stay in the warning tier; the two `advance`
+legs among them are newer and less battle-tested than `pr-gated`'s own
+multi-run GitHub Actions confirmation history (every local run has held
+clean, but that's local-only so far — revisit once they've earned the
+same real-run history). Also renamed the workflow file itself,
+`.github/workflows/node.js.yml` → `build-ci.yml`, matching its own
+`name: Build CI` — every reference to the old filename across this
 project's docs was updated in the same change.
 
 ## Where a "merge request role" is even possible

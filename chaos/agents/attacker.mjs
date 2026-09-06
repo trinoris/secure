@@ -18,20 +18,21 @@ const REMOTE_URL = process.env.REMOTE_URL ?? 'git://remote/repo.git';
 const WORK_DIR = process.env.WORK_DIR ?? '/work';
 const BRANCH = process.env.BRANCH ?? 'main';
 const DURATION_SECONDS = Number(process.env.CHAOS_DURATION_SECONDS ?? 300);
-// direct-master (W1) | working-branch (W2) | pr-gated (W3) |
-// direct-master-signed (W4) — specs/chaotests/03-orchestrator.md. Under
-// working-branch/pr-gated, `master` never accepts a direct update
+// direct-master (W1) | working-branch (W2) | pr-gated (W3) —
+// specs/chaotests/03-orchestrator.md — crossed with SANDBOX_SIGNING
+// (basic|advance), an independent flag this file never needs to branch
+// on directly: every attack below is a plain, unsigned commit regardless
+// of tier, and whether that gets refused is entirely the remote's own
+// pre-receive hook's business, not something the attack itself decides.
+// Under working-branch/pr-gated, `master` never accepts a direct update
 // (remote/entrypoint.mjs's pre-receive hook) — a real hostile collaborator
 // would have to route through a branch the orchestrator reviews too, same
 // as any other pusher, so every attack below targets TARGET_REF, never
 // BRANCH directly, except the one attack added specifically to confirm
-// the direct route is actually refused. W4 has the same shape as
-// direct-master here — no promotion branch to route through, `master`
-// *is* the target — the only difference is what happens once this attack
-// pushes there (signing-checked, not gated by ref name).
+// the direct route is actually refused.
 const WORKFLOW = process.env.SANDBOX_WORKFLOW ?? 'direct-master';
 const TARGET_REF =
-  WORKFLOW === 'direct-master' || WORKFLOW === 'direct-master-signed'
+  WORKFLOW === 'direct-master'
     ? BRANCH
     : WORKFLOW === 'working-branch'
       ? 'working'
