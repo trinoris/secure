@@ -187,6 +187,50 @@ commands, and troubleshooting.
 | chaos-6 "infra" | Infrastructure faults | Kills processes mid-operation, fills disk, drops network links — impersonal fault injection, not attacker-shaped |
 | verifier | Auditor | No key, fresh clone only — exactly the access a real outside auditor would have |
 
+### Reading run length as simulated time
+
+`CHAOS_DURATION_SECONDS` is just wall-clock seconds — nothing in the code
+tracks "day" or "hour," and no actor behaves differently at simulated
+2am vs. simulated 2pm (every actor's round loop runs at the same jittered
+pace — `chaos/lib/proc.mjs`'s `jitter()` — for the whole duration,
+uniformly). The table below is a human-readable *scale* for interpreting
+how much real-world activity a given run length stands in for, not a
+mechanic the sandbox itself implements:
+
+| Real time | Simulated time (T) |
+|---|---|
+| 1 workday (~9–10h of active collaboration) | T0:00 → T2:00 |
+| Day 2 | T2:00 → T4:00 |
+| Day 3 | T4:00 → T6:00 |
+| Day 4 | T6:00 → T8:00 |
+| Day 5 | T8:00 → T10:00 |
+| Day 6 (weekend, lighter activity) | T10:00 → T12:00 |
+| Day 7 (weekend, lighter activity) | T12:00 → T14:00 |
+
+...i.e. one real workday ≈ 2 simulated minutes, so a full simulated week
+is 14 minutes end to end. Mapped onto the actual durations this project
+runs:
+
+| Run | `CHAOS_DURATION_SECONDS` | Simulated span |
+|---|---|---|
+| `npm run chaos:sandbox` default | 300 (5 min) | ~T0:00–T5:00 — about 2½ simulated workdays |
+| `build-ci.yml`'s own matrix legs | 180 (3 min) | ~T0:00–T3:00 — about 1½ simulated workdays |
+| A full simulated week | 840 (14 min) | T0:00–T14:00 — all 7 days |
+
+```sh
+CHAOS_DURATION_SECONDS=840 npm run chaos:sandbox
+```
+
+Longer runs matter for more than flavor: the pr-gated self-poisoning
+finding above ([specs/chaotests/04-agent-threat-model.md](specs/chaotests/04-agent-threat-model.md))
+only ever showed up on real CI's 180s/T3:00 legs — the 90s/T1:30 local
+runs used while building it were simply too short for bad-agent to both
+fire PI1 and then get another ordinary round in afterward. A run that
+looks clean at T1:30 isn't necessarily clean at T3:00 or T14:00 — the
+same actor-timing randomness that makes every run genuinely different
+(see "Run it yourself") also means a longer simulated span is strictly
+more likely to surface a low-probability interaction, never less.
+
 ## Deep dives
 
 - [specs/chaotests/00-test-plan.md](specs/chaotests/00-test-plan.md) — the
