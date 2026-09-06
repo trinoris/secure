@@ -113,25 +113,35 @@ attacker only.
 genuinely registered, genuinely signing collaborator, hijacked into a
 prompt-injection-shaped attack on a fraction of its rounds
 ([specs/chaotests/04-agent-threat-model.md](specs/chaotests/04-agent-threat-model.md)).
-Two real local Docker runs (`CHAOS_DURATION_SECONDS=90` each) confirm the
-signing check has nothing to say about this shape, exactly as the
-analysis predicts:
+Confirmed locally, then on real GitHub Actions infrastructure
+([run 34041479353](https://github.com/trinoris/securegit/actions/runs/34041479353)),
+where the longer run surfaced a real mechanism the shorter local runs
+missed:
 
-- **`direct-master`+`advance`:** 399 plaintext violations, 4 hostile
-  recipient files, `.gitattributes` left not protecting the pattern. W1
-  has no content-review step at all, at any signing tier — so
-  bad-agent's signed attribute-downgrade and hostile-recipient attempts
-  land completely unopposed, and the downgrade cascades: once the filter
-  is gone, every subsequent `secrets/*.json` commit from *any* role
-  (not just bad-agent's own) lands as genuine plaintext.
-- **`pr-gated`+`advance`:** 0 plaintext violations, 0 hostile recipients,
-  `.gitattributes` still protects the pattern — the same content review
-  and unconditional recipient-change floor that make W3 hold clean
-  against an outsider also catch a hijacked-but-trusted signer, because
-  neither mechanism was ever identity-based. One thing still gets
-  through even here: plaintext exfiltration to an unprotected path
-  (`debug.log`) — observed 38 times in this run, honestly reported by the
-  verifier as such, and correctly not counted as a violation of any hard
+- **`direct-master`+`advance`:** signing alone stops nothing here — W1 has
+  no content-review step at all, at any signing tier. Locally: 399
+  plaintext violations (the attribute-downgrade cascading into every
+  subsequent `secrets/*.json` commit from *any* role, not just
+  bad-agent's own) and 4 hostile recipient files. On CI: 3 hostile
+  recipients landed in the shorter window; the downgrade itself hadn't
+  fired yet when the run ended — same underlying finding, different
+  dice roll.
+- **`pr-gated` (both signing tiers) — real plaintext still reaches the
+  remote, just never `master`.** The review gate keeps `master` itself
+  completely clean in every run (`.gitattributes` intact, 0 hostile
+  recipients) — but on real CI (180s runs, long enough for bad-agent to
+  downgrade its own branch *and then keep committing to it*), 22–28
+  plaintext violations landed, every single one `secrets/bad-agent.json`
+  on bad-agent's own now-unfiltered branch. Branch isolation stops an
+  attack from reaching *other* collaborators; it was never a guarantee
+  against an attacker poisoning its own branch's own future commits —
+  no prior attacker-shaped role ever also did ongoing legitimate work on
+  the branch it attacked. Full mechanism in
+  [specs/chaotests/04-agent-threat-model.md](specs/chaotests/04-agent-threat-model.md)'s
+  "self-poisoning correction". Plaintext exfiltration to an unprotected
+  path (`debug.log`) also got through in every `pr-gated` run (11–38
+  occurrences) — honestly reported by the verifier as observed, not
+  prevented, and correctly not counted as a violation of any hard
   invariant, since no mechanism in this project claims to stop it.
 
 ## Watch it live

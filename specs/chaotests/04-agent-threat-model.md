@@ -23,15 +23,18 @@ party one we already trust." This document works out precisely which of
 this project's existing mechanisms still hold against that gap, and
 which one honestly doesn't.
 
-**Status: BUILT and empirically confirmed.** `bad-agent`
-([01-sandbox.md](01-sandbox.md)) now runs this document's own model, not
-the outsider/A6-A7 case — a genuine `COLLABORATOR_ROLES` member
-(`chaos/actors/driver.mjs`), registered and signing exactly like any
-other collaborator, running the ordinary collaborator loop on ~70% of
-rounds and one of the four PI1–PI4 attacks below
-(`hijackedAgentRound()`) on the rest. Two real local Docker runs confirm
-the predicted table exactly (see "Which existing mechanisms actually
-protect against each" below for the numbers).
+**Status: BUILT and empirically confirmed, on real GitHub Actions
+infrastructure.** `bad-agent` ([01-sandbox.md](01-sandbox.md)) now runs
+this document's own model, not the outsider/A6-A7 case — a genuine
+`COLLABORATOR_ROLES` member (`chaos/actors/driver.mjs`), registered and
+signing exactly like any other collaborator, running the ordinary
+collaborator loop on ~70% of rounds and one of the four PI1–PI4 attacks
+below (`hijackedAgentRound()`) on the rest. Real runs mostly confirmed
+the predicted table — with one real correction found along the way, not
+predicted in advance: PI1 under `pr-gated` keeps `master` clean but does
+NOT keep plaintext off the remote entirely (see "The self-poisoning
+correction" below). See "Which existing mechanisms actually protect
+against each" for the full numbers.
 
 ## Why this is a different attacker shape, precisely
 
@@ -73,7 +76,7 @@ commit:
 
 | | Signing check | Content review (orchestrator, W2/W3 promotion) | Recipient-change floor (unconditional) |
 |---|---|---|---|
-| PI1 (attribute downgrade) | ❌ no — validly signed | ✅ yes — `attributes-present` inspects the resulting tree, not who signed it | — |
+| PI1 (attribute downgrade) | ❌ no — validly signed | ⚠️ **partial** — `attributes-present` reliably keeps a downgrade off `master` (blocks the merge); it does NOT retroactively clean the attacker's own branch — see "The self-poisoning correction" below | — |
 | PI2 (blob relocation) | ❌ no | ⚠️ partial — same detector, but T3's own ceiling still holds: a relocated blob is still valid ciphertext, only caught if the pattern protecting the original path doesn't also cover the new one | — |
 | PI3 (plaintext exfiltration) | ❌ no | ❌ **no hard check** — `verify`'s heuristic scan (AWS-key-shaped strings, etc., [13-verify.md](../securegit/13-verify.md)) is advice-tier only on unprotected paths, never a block | — |
 | PI4 (hostile recipient) | ❌ no | — | ✅ **yes, unconditionally** — the orchestrator refuses *any* change under `.securegit/recipients/**` regardless of who signed it ([16](../securegit/16-adversarial-integrity.md)'s T5 section: signing narrows this, never retires it) |
@@ -87,26 +90,80 @@ isn't a protected repository path, has no hard stop anywhere in this
 project today.
 
 **Confirmed on two real local Docker runs** (`direct-master`+`advance`
-vs. `pr-gated`+`advance`, both `CHAOS_DURATION_SECONDS=90`):
+vs. `pr-gated`+`advance`, both `CHAOS_DURATION_SECONDS=90`), then again on
+real GitHub Actions infrastructure at the full six-mode matrix's normal
+duration ([run 34041479353](https://github.com/trinoris/securegit/actions/runs/34041479353),
+`CHAOS_DURATION_SECONDS=180`) — the longer CI runs surfaced a real
+mechanism the shorter local runs were too brief to hit:
 
 - **`direct-master`+`advance` (no content-review step exists at all under
-  W1):** PI1/PI2/PI4 land completely unopposed — 399 plaintext violations,
-  4 hostile recipient files, `.gitattributes` left not protecting the
-  pattern. The PI1 attribute downgrade is what cascades into the 399: once
-  the filter is gone, every subsequent `secrets/*.json` commit from any
-  role lands as genuine plaintext, not just bad-agent's own. This is the
-  concrete demonstration of the table's own point — the signing check
-  that fully stops chaos-5 under this exact mode (`CHAOS.md`'s "0
-  violations" finding) has nothing to say about a signer it already
-  trusts.
-- **`pr-gated`+`advance` (W3, content review + the unconditional
-  recipient floor both apply):** 0 plaintext violations, 0 hostile
-  recipients, `.gitattributes` still protects the pattern — PI1/PI2/PI4
-  fully caught, exactly as predicted. PI3 still landed unopposed (38
-  exfiltration occurrences, correctly reported by
-  `checkAgentExfiltration()` as observed-not-prevented, correctly *not*
-  counted against `hardInvariantsHeld` — see "What building this would
-  actually require" below).
+  W1):** PI1/PI2/PI4 land completely unopposed. Locally: 399 plaintext
+  violations, 4 hostile recipient files, `.gitattributes` left not
+  protecting the pattern. On CI: 0 plaintext violations that run (PI1
+  simply didn't fire before the shorter 180s window ended) but 3 hostile
+  recipients landed (PI4) — the exact expected variance of a 30%-per-round
+  dice roll, not a contradiction. Either way, this is the concrete
+  demonstration of the table's own point — the signing check that fully
+  stops chaos-5 under this exact mode (`CHAOS.md`'s "0 violations"
+  finding) has nothing to say about a signer it already trusts.
+- **`pr-gated`+`advance` (and `+basic`) — the self-poisoning correction.**
+  The local 90s runs showed 0 plaintext violations, which this document
+  originally (incorrectly) reported as "PI1/PI2/PI4 fully caught." The
+  longer real CI runs correct that: both signing tiers showed real
+  plaintext violations (22 under `advance`, 28 under `basic`), and in
+  every single case the leaking path was exactly `secrets/bad-agent.json`
+  — never any other role's file, never anything else under `secrets/`.
+  The mechanism: PI1's downgrade removes `filter=securegit` from
+  `bad-agent`'s own local `.gitattributes`, on `bad-agent`'s own isolated
+  feature branch. `pr-gated`'s branch isolation ("each role's own branch
+  isolated from every OTHER role's,"
+  [03-orchestrator.md](03-orchestrator.md)) correctly prevents this from
+  poisoning any *other* collaborator — but it was never a guarantee
+  against a role poisoning its *own* branch's own future history, because
+  no prior attacker-shaped role (chaos-5 included) ever also ran an
+  ordinary commit loop on the same branch it attacked. `bad-agent` does:
+  every `hijackedAgentRound()` that rolls an ordinary round *after* PI1
+  has already fired keeps committing to the now-unfiltered branch, and
+  each of those commits is genuine plaintext. The review gate still does
+  exactly its job — `master`'s own history stayed completely clean in
+  every observed run (`attributesFinalState.containsFilter: true`,
+  `hostileRecipients.count: 0` in both CI legs) — but the plaintext
+  reached the shared remote's overall reachable history anyway, the
+  moment `bad-agent` pushed its own poisoned branch, before any review
+  ever ran. This is the real, current shape of PI1 under `pr-gated`: not
+  "fully caught," but "kept off `master`, not kept off the remote."
+  `.github/workflows/build-ci.yml`'s own hard-fail check for `pr-gated`
+  was corrected to match — it now hard-fails only on the four checks
+  actually scoped to `master` (repository integrity, zero data loss, no
+  hostile recipients, `.gitattributes` intact) and warns, rather than
+  fails, on this specific reachable-history-wide finding.
+  PI2/PI4 were not observed landing in either CI `pr-gated` leg (0
+  hostile recipients, no relocated files) — consistent with, though not
+  yet a large-sample confirmation of, the table's "fully caught" claim
+  for PI4 and "partial" claim for PI2. PI3 landed unopposed in both legs
+  (11–38 exfiltration occurrences across runs), correctly reported by
+  `checkAgentExfiltration()` as observed-not-prevented and correctly
+  *not* counted against `hardInvariantsHeld`.
+
+## The self-poisoning correction, stated on its own
+
+Worth stating plainly, separate from the run-by-run numbers above: **PI1
+is not "fully caught by content review" the way T1 is under `pr-gated`.**
+T1 is fully caught there because chaos-5 never has anything legitimate of
+its own to keep committing after the downgrade — its branch is isolated
+*and* dormant except for more attacks. `bad-agent` breaks that second,
+previously-unnoticed assumption: it's the first attacker-shaped role that
+also does real, ongoing, otherwise-legitimate work on the exact branch it
+attacks. The result is a genuinely new finding, not a regression: `master`
+stays clean (the review gate's actual, narrower guarantee), but the
+project's own broader stated invariant — "no plaintext ever crossed the
+boundary... everywhere in reachable history"
+([../CHAOS.md](../../CHAOS.md)) — does not hold under any workflow once an
+attacker also behaves like an ordinary collaborator on its own branch.
+This is arguably the most realistic and most severe of the four PI
+attacks precisely because it doesn't need PI1 to be caught at merge time
+to do damage — the damage is already done the moment the poisoned branch
+is pushed, regardless of whether it's ever merged at all.
 
 ## This is not a sandbox bug — it's an existing, named boundary
 

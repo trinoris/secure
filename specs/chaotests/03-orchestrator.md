@@ -623,7 +623,17 @@ should show at most..." framing didn't capture:
   branch is completely unaffected; there is no shared state for the
   downgrade to poison. This is a stronger property than "reviewed before
   landing" — it's that the attack has no victim to reach in the first
-  place.
+  place, **for chaos-5 specifically, because chaos-5 never has anything
+  legitimate of its own to keep committing after the downgrade.** This
+  isolation was never a guarantee against a role poisoning its *own*
+  branch's own future history — see
+  [04-agent-threat-model.md](04-agent-threat-model.md)'s "self-poisoning
+  correction": `bad-agent` is the first attacker-shaped role that also
+  runs an ordinary commit loop on the branch it attacks, and real CI runs
+  confirm exactly that: its own subsequent commits on its own
+  now-unfiltered branch land as genuine plaintext, reachable in the
+  remote's overall history the moment they're pushed, even though
+  `master` itself stays completely clean.
 - **W2 has no such isolation — `working` is shared, so a downgrade
   landing there *does* poison every collaborator's next edit on it**,
   producing a real plaintext blob on the one branch everyone (including
