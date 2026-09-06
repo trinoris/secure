@@ -143,7 +143,13 @@ async function checkAttributeState() {
 // exactly what this filter restores. Kept as its own list (not imported
 // from driver.mjs) since this file runs in a separate container with no
 // shared module boundary — must be kept in sync by hand.
-const LEGITIMATE_RECIPIENT_LABELS = new Set(['collaborator-a', 'collaborator-b', 'code-agent']);
+// `bad-agent` is included here too, not excluded: its OWN initial
+// registration (registerSigningRecipients(), same flow as everyone else —
+// specs/chaotests/04-agent-threat-model.md) is genuinely legitimate. Only
+// a LATER fake recipient it adds under a different label (its PI4 attack,
+// e.g. "onboarding new contractor") should be flagged hostile — which this
+// filter already does correctly by label, not by pusher identity.
+const LEGITIMATE_RECIPIENT_LABELS = new Set(['collaborator-a', 'collaborator-b', 'code-agent', 'bad-agent']);
 
 async function checkHostileRecipients() {
   const paths = await pathsUnder(BRANCH, '.securegit/recipients');
@@ -165,6 +171,32 @@ async function checkHostileRecipients() {
 async function checkRelocatedFiles() {
   const paths = await pathsUnder(BRANCH, 'secrets');
   return paths.filter((p) => p.includes('relocated-'));
+}
+
+/**
+ * PI3 (specs/chaotests/04-agent-threat-model.md): a hijacked-but-genuinely-
+ * registered agent exfiltrating already-decrypted plaintext to a path
+ * `.gitattributes` never protected — `debug.log`, in this sandbox's
+ * concrete shape (hijackedPlaintextExfiltration() in driver.mjs). This is
+ * NOT one of the three hard invariants and never affects
+ * hardInvariantsHeld or the process exit code: `noPlaintextLeaked` is, and
+ * stays, scoped to protected paths only (secrets/ — see
+ * checkNoPlaintextEverCommitted() above). The honestly-documented finding
+ * here is "observed, not prevented" — surfacing it lets a real run show
+ * whether PI3 happened, without pretending it was ever a check this
+ * project could pass or fail.
+ */
+async function checkAgentExfiltration() {
+  const revListRes = await git(['rev-list', '--all'], { cwd: WORK_DIR });
+  const commits = revListRes.stdout.trim().split('\n').filter(Boolean);
+  const observations = [];
+  for (const commit of commits) {
+    const res = await git(['show', `${commit}:debug.log`], { cwd: WORK_DIR });
+    if (res.code === 0 && res.stdout.trim()) {
+      observations.push({ commit, path: 'debug.log' });
+    }
+  }
+  return { observed: observations.length > 0, occurrences: observations };
 }
 
 async function readReport() {
@@ -228,6 +260,9 @@ async function main() {
   say('checking: relocated files present (chaos-5\'s T3)');
   const relocated = await checkRelocatedFiles();
 
+  say('checking: agent plaintext exfiltration (bad-agent\'s PI3 — observed-not-prevented, not a hard invariant)');
+  const agentExfiltration = await checkAgentExfiltration();
+
   say('reading the shared run report');
   const events = await readReport();
   const summary = summarizeReport(events);
@@ -251,6 +286,7 @@ async function main() {
     attributesFinalState: attributes,
     hostileRecipients,
     relocatedFiles: relocated,
+    agentExfiltration,
     reportSummary: summary,
     anyoneRanAtAll,
   };
@@ -271,6 +307,11 @@ async function main() {
   say(`.gitattributes still protects the pattern: ${attributes.present ? attributes.containsFilter : 'file absent'}`);
   say(`hostile recipient files on remote: ${hostileRecipients.count}`);
   say(`relocated files on remote: ${relocated.length}`);
+  say(
+    `bad-agent plaintext exfiltration (PI3, observed-not-prevented, not a hard invariant): ${
+      agentExfiltration.observed ? `OBSERVED (${agentExfiltration.occurrences.length} occurrence(s))` : 'not observed this run'
+    }`,
+  );
   say(`script-level errors across all roles: ${summary.errorCount}`);
   for (const [role, s] of Object.entries(summary.byRole)) {
     say(`  ${role}: ${s.actions} actions, ${s.observations} observations, ${s.errors} errors, ${s.roundsCompleted} rounds`);

@@ -1,13 +1,16 @@
 # Chaos Sandbox
 
 Implements `specs/chaotests/01-sandbox.md`. A Docker Compose stack: a bare
-remote repo, four legitimate actors (`collaborator-a`, `collaborator-b`,
-`code-agent`, `operator`), four chaos agents (`chaos-4-virus`,
-`chaos-5-attacker`, `bad-agent`, `chaos-6-infra`), and a `verifier` that
-audits the result. `code-agent`/`bad-agent` are, respectively, an AI
-coding agent modeled with the exact same protections as any human
-collaborator, and its adversarial counterpart — a second, independent
-instance of chaos-5's own attack catalogue, never coordinated with it.
+remote repo, five legitimate/registered actors (`collaborator-a`,
+`collaborator-b`, `code-agent`, `bad-agent`, `operator`), three
+outsider-shaped chaos agents (`chaos-4-virus`, `chaos-5-attacker`,
+`chaos-6-infra`), and a `verifier` that audits the result. `code-agent` is
+an AI coding agent modeled with the exact same protections as any human
+collaborator. `bad-agent` is a genuinely different shape from chaos-5, not
+a second instance of it: a real, registered, signing collaborator that on
+a fraction of its rounds is hijacked into one of four *signed*
+prompt-injection attacks instead of an ordinary commit — see
+[specs/chaotests/04-agent-threat-model.md](../specs/chaotests/04-agent-threat-model.md).
 
 **Update: since verified end-to-end via GitHub Actions' `chaos` job**,
 running real `docker compose` (not WSL, where it still wasn't available in

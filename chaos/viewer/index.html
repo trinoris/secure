@@ -609,7 +609,7 @@
     'operator': { badge: 'OP', label: 'operator', sub: 'key rotation & audit' },
     'chaos-4-virus': { badge: '4', label: 'chaos-4 &middot; virus', sub: 'file corruption' },
     'chaos-5-attacker': { badge: '5', label: 'chaos-5 &middot; attacker', sub: 'hostile push access' },
-    'bad-agent': { badge: 'BA', label: 'bad-agent', sub: 'hostile AI agent' },
+    'bad-agent': { badge: 'BA', label: 'bad-agent', sub: 'hijacked trusted agent (PI1-4)' },
     'chaos-6-infra': { badge: '6', label: 'chaos-6 &middot; infra', sub: 'process / disk / network faults' }
   };
 
@@ -976,7 +976,27 @@
       return Object.assign(base, { kind: 'neutral', tag: role.toUpperCase(), text: msg });
     }
 
-    if (role === 'chaos-5-attacker' || role === 'bad-agent') {
+    // bad-agent (specs/chaotests/04-agent-threat-model.md): a genuinely
+    // registered, genuinely signing collaborator most of the time — its
+    // ordinary unlock/pull/push messages fall through to the same
+    // message-shape-based handling every friendly role uses below — that
+    // is occasionally hijacked into one of four signed PI1-PI4 attacks.
+    // Checked by message shape, not role: only bad-agent produces these
+    // in practice, but nothing here assumes that.
+    var piMatch = /^PI([1-4]) hijacked/.exec(msg);
+    if (piMatch) {
+      var piTagFor = { '1': 'ATTRIBUTE DOWNGRADE', '2': 'BLOB RELOCATED', '3': 'PLAINTEXT EXFIL', '4': 'HOSTILE RECIPIENT' };
+      return Object.assign(base, {
+        kind: 'hostile',
+        wasAttempt: true,
+        tag: 'PI' + piMatch[1] + ' SIGNED',
+        text: piTagFor[piMatch[1]] + ' — validly signed, plausible pretext'
+        // no hitTargetId — same reasoning as chaos-5 below: this targets
+        // the shared remote/review process, not any one collaborator
+      });
+    }
+
+    if (role === 'chaos-5-attacker') {
       if (msg.indexOf('attack round') === 0) {
         // `rejected === true` (only possible for `direct-master-bypass`,
         // specs/chaotests/03-orchestrator.md) means the push was attempted
@@ -1061,7 +1081,7 @@
     }
 
     for (var r = 1; r <= ROUNDS; r++) {
-      ['collaborator-a', 'collaborator-b', 'code-agent'].forEach(function (id) {
+      ['collaborator-a', 'collaborator-b', 'code-agent', 'bad-agent'].forEach(function (id) {
         pushedCount++;
         push(id, r, 'friendly', 'PUSH', 'commit ' + hex(7), { healTargetId: id });
       });
@@ -1091,14 +1111,26 @@
           ['T4', 'blob rolled back'],
           ['T5', 'hostile recipient added']
         ];
-        ['chaos-5-attacker', 'bad-agent'].forEach(function (attackerId) {
-          var pick = techs[Math.floor(Math.random() * techs.length)];
-          if (Math.random() < 0.7) {
-            push(attackerId, r, 'hostile', pick[0] + ' LANDED', pick[1], { wasAttempt: true });
-          } else {
-            push(attackerId, r, 'neutral', 'BLOCKED', 'non-fast-forward, rejected', { wasAttempt: true });
-          }
-        });
+        var pick = techs[Math.floor(Math.random() * techs.length)];
+        if (Math.random() < 0.7) {
+          push('chaos-5-attacker', r, 'hostile', pick[0] + ' LANDED', pick[1], { wasAttempt: true });
+        } else {
+          push('chaos-5-attacker', r, 'neutral', 'BLOCKED', 'non-fast-forward, rejected', { wasAttempt: true });
+        }
+      }
+      // bad-agent (specs/chaotests/04-agent-threat-model.md): a genuinely
+      // registered, genuinely signing collaborator on ~70% of rounds
+      // (already pushed above), hijacked into one of the four signed
+      // PI1-4 attacks on the rest — never chaos-5's outsider shape.
+      if (Math.random() < 0.3) {
+        var piTechs = [
+          ['1', 'ATTRIBUTE DOWNGRADE'],
+          ['2', 'BLOB RELOCATED'],
+          ['3', 'PLAINTEXT EXFIL'],
+          ['4', 'HOSTILE RECIPIENT']
+        ];
+        var piPick = piTechs[Math.floor(Math.random() * piTechs.length)];
+        push('bad-agent', r, 'hostile', 'PI' + piPick[0] + ' SIGNED', piPick[1] + ' — validly signed, plausible pretext', { wasAttempt: true });
       }
     }
 

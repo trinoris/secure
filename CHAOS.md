@@ -100,6 +100,40 @@ in one run
 - The live comparison — the actual current numbers, not last session's —
   is published every night: see "Watch it live" below.
 
+**These numbers predate `bad-agent`'s redefinition** (below) — at the
+time of run 34022273040, `bad-agent` still ran chaos-5's own outsider
+attack catalogue, doubling attack pressure rather than adding a distinct
+threat shape. The findings above (in particular "both close to zero under
+`advance`") describe the signing check's effect on an *unregistered*
+attacker only.
+
+### A signed attacker changes the picture — the trusted-agent-hijack finding
+
+`bad-agent` now models something the numbers above don't cover at all: a
+genuinely registered, genuinely signing collaborator, hijacked into a
+prompt-injection-shaped attack on a fraction of its rounds
+([specs/chaotests/04-agent-threat-model.md](specs/chaotests/04-agent-threat-model.md)).
+Two real local Docker runs (`CHAOS_DURATION_SECONDS=90` each) confirm the
+signing check has nothing to say about this shape, exactly as the
+analysis predicts:
+
+- **`direct-master`+`advance`:** 399 plaintext violations, 4 hostile
+  recipient files, `.gitattributes` left not protecting the pattern. W1
+  has no content-review step at all, at any signing tier — so
+  bad-agent's signed attribute-downgrade and hostile-recipient attempts
+  land completely unopposed, and the downgrade cascades: once the filter
+  is gone, every subsequent `secrets/*.json` commit from *any* role
+  (not just bad-agent's own) lands as genuine plaintext.
+- **`pr-gated`+`advance`:** 0 plaintext violations, 0 hostile recipients,
+  `.gitattributes` still protects the pattern — the same content review
+  and unconditional recipient-change floor that make W3 hold clean
+  against an outsider also catch a hijacked-but-trusted signer, because
+  neither mechanism was ever identity-based. One thing still gets
+  through even here: plaintext exfiltration to an unprotected path
+  (`debug.log`) — observed 38 times in this run, honestly reported by the
+  verifier as such, and correctly not counted as a violation of any hard
+  invariant, since no mechanism in this project claims to stop it.
+
 ## Watch it live
 
 [![Chaos Match Viewer](https://img.shields.io/badge/chaos%20sandbox-live%20replay-3ecf8e)](https://trinoris.github.io/securegit/)
@@ -138,8 +172,8 @@ commands, and troubleshooting.
 | code-agent | Legitimate collaborator (AI) | Identical loop to collaborator-a/b, no special-casing anywhere in the driver — models an AI coding agent committing like any human collaborator, same protections and signing requirements |
 | operator / orchestrator | Maintenance & review | `direct-master`: key rotation, `verify`, status checks, and post-hoc attribute recovery. `working-branch`/`pr-gated`: reviews every proposed change before `master` ever moves |
 | chaos-4 "virus" | Local corruption | Tampers with a collaborator's own session/keyring/identity files — the shape of commodity ransomware or a crashing backup tool |
-| chaos-5 "attacker" | Hostile collaborator | Ordinary push access, nothing more — attempts attribute downgrades, blob relocation/rollback, and hostile recipients, exactly matching a real collaborator who turns hostile |
-| bad-agent | Hostile collaborator (AI) | code-agent's adversarial counterpart — a second, independent instance of chaos-5's exact attack catalogue, modeling a compromised or malicious AI agent, never coordinated with chaos-5 |
+| chaos-5 "attacker" | Hostile outsider | Ordinary push access, no registered identity — attempts attribute downgrades, blob relocation/rollback, and hostile recipients, exactly matching a real collaborator-shaped attacker who was never a recipient |
+| bad-agent | Hijacked trusted agent (AI) | A genuine, registered, signing collaborator — same identity and decrypt access as code-agent — that on ~30% of rounds is hijacked into one of four *signed* prompt-injection attacks (attribute downgrade, blob relocation, plaintext exfiltration, hostile recipient) instead of an ordinary commit; see [specs/chaotests/04-agent-threat-model.md](specs/chaotests/04-agent-threat-model.md) |
 | chaos-6 "infra" | Infrastructure faults | Kills processes mid-operation, fills disk, drops network links — impersonal fault injection, not attacker-shaped |
 | verifier | Auditor | No key, fresh clone only — exactly the access a real outside auditor would have |
 

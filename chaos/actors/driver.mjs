@@ -19,7 +19,7 @@
 // this first version, so the driver never needs conflict-resolution logic
 // of its own. A shared, contended file is a natural follow-up.
 
-import { mkdir, copyFile, writeFile, readFile, stat, rm } from 'node:fs/promises';
+import { mkdir, copyFile, writeFile, readFile, readdir, stat, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { git, securegit, securegitBinaryIO, runBinary, sleep, jitter } from '../lib/proc.mjs';
 import { say, record } from '../lib/log.mjs';
@@ -55,8 +55,13 @@ const SHARED_IDENTITY = (role) => join(SHARED_DIR, `identity-${role}.json`);
 // by ROLE, no changes needed there) and, once SIGNING_ENABLED, gets its
 // own registered signing identity. `code-agent` represents an AI coding
 // agent committing like any other collaborator — same protections, same
-// requirements, no special-casing anywhere else in this file.
-const COLLABORATOR_ROLES = ['collaborator-a', 'collaborator-b', 'code-agent'];
+// requirements, no special-casing anywhere else in this file. `bad-agent`
+// is deliberately included here too, not excluded — it's registered
+// through the exact same real, legitimate flow as everyone else
+// (specs/chaotests/04-agent-threat-model.md's whole point: the signing
+// key and recipient registration are genuine, only the intent behind
+// some of its later commits is hijacked — see hijackedAgentRound()).
+const COLLABORATOR_ROLES = ['collaborator-a', 'collaborator-b', 'code-agent', 'bad-agent'];
 // Only set (and only meaningful) for the operator under working-branch/
 // pr-gated — see `landReviewedMerge()`.
 const REMOTE_REPO_PATH = process.env.REMOTE_REPO_PATH;
@@ -358,6 +363,213 @@ async function pullOnce(ref = BRANCH) {
     return { ok: false, step: 'merge', ...mergeRes };
   }
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// bad-agent — a hijacked trusted agent, not an outsider
+// (specs/chaotests/04-agent-threat-model.md)
+// ---------------------------------------------------------------------------
+//
+// Unlike chaos-5 (chaos/agents/attacker.mjs — never a recipient, never
+// signs anything), bad-agent is a genuine COLLABORATOR_ROLES member: real
+// signing identity, really registered, really trusted. Every commit below
+// is signed with that same real key (enableCommitSigning() already set
+// commit.gpgsign=true at bootstrap) — none of these are stopped by the
+// signing check itself, by design. What (if anything) stops each one is
+// exactly the question 04-agent-threat-model.md's own comparison table
+// answers.
+
+/**
+ * PI1 — a plausible attribute "fix", signed. Structurally identical to
+ * T1 (16-adversarial-integrity.md), just committed by an already-trusted
+ * signer under a benign pretext instead of an unknown pusher.
+ */
+async function hijackedAttributeDowngrade(n) {
+  const before = await readFile(GITATTRIBUTES_PATH, 'utf8').catch(() => '');
+  const lines = before.split('\n');
+  const idx = lines.findIndex((l) => l.includes('filter=securegit'));
+  if (idx === -1) {
+    await record('observation', `PI1 attribute downgrade found nothing to downgrade (round ${n})`, {});
+    return;
+  }
+  const removed = lines[idx];
+  await writeFile(GITATTRIBUTES_PATH, [...lines.slice(0, idx), ...lines.slice(idx + 1)].join('\n'));
+  await git(['add', '.gitattributes'], { cwd: WORK_DIR, env: gitEnv() });
+  const commit = await git(
+    ['commit', '-m', 'fix: correct overly broad gitattributes pattern slowing down CI'],
+    { cwd: WORK_DIR, env: gitEnv() },
+  );
+  if (commit.code !== 0) {
+    await record('observation', `PI1 nothing to commit (round ${n})`, commit);
+    return;
+  }
+  const push = await git(['push', 'origin', TARGET_REF], { cwd: WORK_DIR, env: gitEnv() });
+  await record('action', `PI1 hijacked attribute downgrade (round ${n}) — signed, plausible pretext`, { removed, push });
+}
+
+/**
+ * PI2 — a "reorganize secrets/ for clarity" refactor, signed. Not the
+ * same shape as chaos-5's own T3 (a relocated blob that's still valid
+ * ciphertext, since that's built via raw git plumbing that never touches
+ * the working tree) — an ordinary file-level move is worse, not
+ * equivalent: bad-agent's own working tree already holds this file's
+ * *decrypted* content (git's own smudge), so an ordinary `mv` lands
+ * plaintext at `config/`, a path .gitattributes never protected at all.
+ * See 04-agent-threat-model.md's own note on exactly this distinction.
+ */
+async function hijackedBlobRelocation(n) {
+  const secretsDir = join(WORK_DIR, 'secrets');
+  let files;
+  try {
+    files = (await readdir(secretsDir)).filter((f) => f.endsWith('.json'));
+  } catch {
+    files = [];
+  }
+  if (files.length === 0) {
+    await record('observation', `PI2 blob relocation found nothing under secrets/ (round ${n})`, {});
+    return;
+  }
+  const source = files[Math.floor(Math.random() * files.length)];
+  const destDir = join(WORK_DIR, 'config');
+  await mkdir(destDir, { recursive: true });
+  const content = await readFile(join(secretsDir, source));
+  await writeFile(join(destDir, source), content);
+  await git(['add', '-A'], { cwd: WORK_DIR, env: gitEnv() });
+  const commit = await git(
+    ['commit', '-m', 'refactor: reorganize secrets/ into config/ for clarity'],
+    { cwd: WORK_DIR, env: gitEnv() },
+  );
+  if (commit.code !== 0) {
+    await record('observation', `PI2 nothing to commit (round ${n})`, commit);
+    return;
+  }
+  const push = await git(['push', 'origin', TARGET_REF], { cwd: WORK_DIR, env: gitEnv() });
+  await record('action', `PI2 hijacked blob relocation (round ${n}) — signed, plausible pretext, plaintext at destination`, {
+    source,
+    dest: `config/${source}`,
+    push,
+  });
+}
+
+/**
+ * PI3 — direct plaintext exfiltration, signed. The genuinely new attack
+ * shape this whole document exists for: bad-agent has real decrypt
+ * access (it can legitimately read this file's contents), and writes
+ * them to a path never protected in the first place, under a plausible
+ * "helpful" pretext. Nothing in this project stops this — the same
+ * "code execution on an unlocked workstation" boundary
+ * securegit/01-threat-model.md already names for a human, restated for
+ * an agent. Deliberately not disguised as anything else in the
+ * verifier's own report (checkAgentExfiltration()) — the honest result
+ * here is "observed, not prevented", not silently absent.
+ */
+async function hijackedPlaintextExfiltration(n) {
+  const secretsDir = join(WORK_DIR, 'secrets');
+  let files;
+  try {
+    files = (await readdir(secretsDir)).filter((f) => f.endsWith('.json'));
+  } catch {
+    files = [];
+  }
+  if (files.length === 0) {
+    await record('observation', `PI3 plaintext exfiltration found nothing under secrets/ (round ${n})`, {});
+    return;
+  }
+  const source = files[Math.floor(Math.random() * files.length)];
+  const content = await readFile(join(secretsDir, source), 'utf8');
+  const logPath = join(WORK_DIR, 'debug.log');
+  const existing = await readFile(logPath, 'utf8').catch(() => '');
+  await writeFile(logPath, `${existing}[debug] contents of ${source}:\n${content}\n`);
+  await git(['add', 'debug.log'], { cwd: WORK_DIR, env: gitEnv() });
+  const commit = await git(['commit', '-m', 'chore: add debug logging for troubleshooting'], { cwd: WORK_DIR, env: gitEnv() });
+  if (commit.code !== 0) {
+    await record('observation', `PI3 nothing to commit (round ${n})`, commit);
+    return;
+  }
+  const push = await git(['push', 'origin', TARGET_REF], { cwd: WORK_DIR, env: gitEnv() });
+  await record('action', `PI3 hijacked plaintext exfiltration (round ${n}) — signed, plausible pretext, plaintext committed to an unprotected path`, {
+    source,
+    push,
+  });
+}
+
+/**
+ * PI4 — a hostile recipient, signed by an already-trusted party.
+ * Structurally identical to T5, but from a signer already on the
+ * recipient list rather than an unknown pusher — which is exactly why
+ * 16-adversarial-integrity.md's own T5 floor (any recipient-file change
+ * escalates unconditionally, never auto-accepted) has to hold regardless
+ * of who signs it, not just for unregistered pushers.
+ */
+async function hijackedRecipientAddition(n) {
+  const fingerprint = `bad-agent-helper-${Date.now().toString(16)}`;
+  const fakeRecipient = {
+    version: 1,
+    fingerprint,
+    label: 'onboarding new contractor',
+    publicKey: `SGPUB1-${'A'.repeat(43)}`,
+    addedBy: ROLE,
+    keys: {},
+  };
+  const recipientPath = join(WORK_DIR, '.securegit', 'recipients', `${fingerprint}.json`);
+  await mkdir(dirname(recipientPath), { recursive: true });
+  await writeFile(recipientPath, `${JSON.stringify(fakeRecipient, null, 2)}\n`);
+  await git(['add', recipientPath], { cwd: WORK_DIR, env: gitEnv() });
+  const commit = await git(['commit', '-m', 'chore: onboard new contractor'], { cwd: WORK_DIR, env: gitEnv() });
+  if (commit.code !== 0) {
+    await record('observation', `PI4 nothing to commit (round ${n})`, commit);
+    return;
+  }
+  const push = await git(['push', 'origin', TARGET_REF], { cwd: WORK_DIR, env: gitEnv() });
+  await record('action', `PI4 hijacked recipient addition (round ${n}) — signed, plausible pretext`, { fingerprint, push });
+}
+
+/**
+ * bad-agent's round: mostly an ordinary collaborator commit (same shape
+ * as collaboratorRound(), inlined rather than shared — two call sites
+ * doesn't earn a common helper), but on ~30% of rounds, one of the four
+ * PI attacks above instead — modeling a prompt injection hijacking an
+ * otherwise-legitimate agent mid-task, not a permanently hostile actor.
+ */
+async function hijackedAgentRound(n) {
+  await resyncKeyring();
+  const unlock = await securegit(['unlock'], { cwd: WORK_DIR });
+  await record('observation', `unlock (round ${n})`, { code: unlock.code });
+
+  const pull = await pullOnce(TARGET_REF);
+  await record('observation', `pull (round ${n})`, pull);
+
+  if (Math.random() < 0.3) {
+    const attacks = [hijackedAttributeDowngrade, hijackedBlobRelocation, hijackedPlaintextExfiltration, hijackedRecipientAddition];
+    await attacks[Math.floor(Math.random() * attacks.length)](n);
+    return;
+  }
+
+  const filePath = join(WORK_DIR, 'secrets', `${ROLE}.json`);
+  let counter = n;
+  try {
+    const current = JSON.parse(await readFile(filePath, 'utf8'));
+    counter = (current.counter ?? 0) + 1;
+  } catch {
+    // First round, or the file was corrupted/removed by chaos — either way,
+    // writing a fresh, well-formed file is the correct move, not an error.
+  }
+  await writeFile(filePath, `${JSON.stringify({ role: ROLE, counter, at: new Date().toISOString() }, null, 2)}\n`);
+
+  await git(['add', '-A'], { cwd: WORK_DIR, env: gitEnv() });
+  const commit = await git(['commit', '-m', `${ROLE}: round ${n}`], { cwd: WORK_DIR, env: gitEnv() });
+  if (commit.code !== 0) {
+    await record('observation', `nothing to commit (round ${n})`, commit);
+    return;
+  }
+  let push = await git(['push', 'origin', TARGET_REF], { cwd: WORK_DIR, env: gitEnv() });
+  if (push.code !== 0) {
+    const retryPull = await pullOnce(TARGET_REF);
+    if (retryPull.ok) {
+      push = await git(['push', 'origin', TARGET_REF], { cwd: WORK_DIR, env: gitEnv() });
+    }
+  }
+  await record('observation', `push (round ${n})`, push);
 }
 
 async function collaboratorRound(n) {
@@ -910,6 +1122,8 @@ async function main() {
         } else {
           await orchestratorReviewRound(round);
         }
+      } else if (ROLE === 'bad-agent') {
+        await hijackedAgentRound(round);
       } else {
         await collaboratorRound(round);
       }
