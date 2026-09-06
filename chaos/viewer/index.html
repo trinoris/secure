@@ -119,10 +119,11 @@
   /* ---------- workflow comparison (specs/chaotests/03-orchestrator.md) ---------- */
   .wf-compare {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 14px;
   }
-  @media (max-width: 980px) { .wf-compare { grid-template-columns: 1fr; } }
+  @media (max-width: 1180px) { .wf-compare { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 620px) { .wf-compare { grid-template-columns: 1fr; } }
   .wf-card {
     background: var(--panel);
     border: 1px solid var(--line);
@@ -475,6 +476,12 @@
       <div class="wf-card-verdict" data-f="verdict">checking&hellip;</div>
       <div class="wf-card-detail" data-f="detail"></div>
     </div>
+    <div class="wf-card pending" id="wf-card-direct-master-signed" data-mode="direct-master-signed">
+      <div class="wf-card-title">W4 &middot; SIGNED DIRECT MASTER</div>
+      <div class="wf-card-sub">no review at all &mdash; every push must be signed by a registered recipient</div>
+      <div class="wf-card-verdict" data-f="verdict">checking&hellip;</div>
+      <div class="wf-card-detail" data-f="detail"></div>
+    </div>
   </section>
 
   <div class="transport">
@@ -534,7 +541,7 @@
     <div class="resolution-detail" id="resolutionDetail"></div>
   </div>
 
-  <p class="footnote">Reads <code>chaos/report.jsonl</code> or <code>verifier-result.json</code> from a real sandbox run &mdash; see <code>specs/chaotests/01-sandbox.md</code> and, for the three-workflow comparison above, <code>specs/chaotests/03-orchestrator.md</code>. Nothing here is uploaded; the file never leaves your browser.</p>
+  <p class="footnote">Reads <code>chaos/report.jsonl</code> or <code>verifier-result.json</code> from a real sandbox run &mdash; see <code>specs/chaotests/01-sandbox.md</code> and, for the four-workflow comparison above, <code>specs/chaotests/03-orchestrator.md</code>. Nothing here is uploaded; the file never leaves your browser.</p>
 </div>
 
 <script>
@@ -1086,7 +1093,7 @@
   });
 
   // ---------- auto-load a published run, if this page was deployed
-  // alongside one (see .github/workflows/node.js.yml's `chaos` job) ----------
+  // alongside one (see .github/workflows/build-ci.yml's `chaos` job) ----------
 
   async function fetchJsonSibling(name, asText, prefix) {
     try {
@@ -1103,8 +1110,8 @@
 
   // `prefix` is '' for a single-run publish (today's `chaos-run-*`
   // artifact shape, and still what a local double-clicked file resolves
-  // against) or '<mode>/' for one leg of the three-workflow comparison
-  // below (`.github/workflows/node.js.yml`'s `chaos-publish` job —
+  // against) or '<mode>/' for one leg of the four-workflow comparison
+  // below (`.github/workflows/build-ci.yml`'s `chaos-publish` job —
   // specs/chaotests/03-orchestrator.md).
   async function tryLoadPublishedRun(prefix) {
     prefix = prefix || '';
@@ -1146,14 +1153,14 @@
     return true;
   }
 
-  // ---------- three-workflow comparison (specs/chaotests/03-orchestrator.md) ----------
-  // `chaos-publish` (.github/workflows/node.js.yml) assembles all three
+  // ---------- four-workflow comparison (specs/chaotests/03-orchestrator.md) ----------
+  // `chaos-publish` (.github/workflows/build-ci.yml) assembles all four
   // matrix legs' results as `<mode>/report.jsonl` + `<mode>/verifier-
   // result.json` siblings of this page. Absent entirely for a single-run
   // publish (`chaos-run-*`, this file's older shape) or a locally opened
   // file — the panel just stays hidden in that case, see loadComparison's
   // return value.
-  var MODES = ['direct-master', 'working-branch', 'pr-gated'];
+  var MODES = ['direct-master', 'working-branch', 'pr-gated', 'direct-master-signed'];
 
   function setWfCard(mode, level, verdictText, detailText) {
     var card = document.getElementById('wf-card-' + mode);

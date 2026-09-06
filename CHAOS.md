@@ -106,10 +106,10 @@ folded into the same claim:
 
 [![Chaos Match Viewer](https://img.shields.io/badge/chaos%20sandbox-live%20replay-3ecf8e)](https://trinoris.github.io/securegit/)
 
-`.github/workflows/node.js.yml`'s `chaos` job runs all three workflows as
+`.github/workflows/build-ci.yml`'s `chaos` job runs all four workflows as
 a real, several-minute campaign every night (and on demand via
 `workflow_dispatch`), and publishes the result as a GitHub Pages site: a
-side-by-side verdict for W1/W2/W3, and a full match replay — friendly
+side-by-side verdict for W1/W2/W3/W4, and a full match replay — friendly
 collaborators, hostile contacts, a live commit log, three invariant gauges
 resolving at the end — for whichever one you pick.
 

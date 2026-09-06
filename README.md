@@ -1,6 +1,6 @@
 # `@trinoris/securegit`
 
-[![Build CI](https://github.com/trinoris/securegit/actions/workflows/node.js.yml/badge.svg)](https://github.com/trinoris/securegit/actions/workflows/node.js.yml)
+[![Build CI](https://github.com/trinoris/securegit/actions/workflows/build-ci.yml/badge.svg)](https://github.com/trinoris/securegit/actions/workflows/build-ci.yml)
 [![CodeQL](https://github.com/trinoris/securegit/actions/workflows/codeql.yml/badge.svg)](https://github.com/trinoris/securegit/actions/workflows/codeql.yml)
 [![Secret Scan](https://github.com/trinoris/securegit/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/trinoris/securegit/actions/workflows/gitleaks.yml)
 [![Release](https://github.com/trinoris/securegit/actions/workflows/release.yml/badge.svg)](https://github.com/trinoris/securegit/actions/workflows/release.yml)
@@ -160,7 +160,7 @@ npm run chaos:sandbox
 
 See [chaos/README.md](chaos/README.md) for prerequisites and exact
 commands. A nightly run of all three workflows is published as a GitHub
-Pages site (`.github/workflows/node.js.yml`'s `chaos` job) — the latest
+Pages site (`.github/workflows/build-ci.yml`'s `chaos` job) — the latest
 comparison is viewable at `https://trinoris.github.io/securegit/`.
 
 ## Development
@@ -174,7 +174,7 @@ npm run typecheck
 ```
 
 CI runs the build/test/`npm audit` gate on every push and PR
-([node.js.yml](.github/workflows/node.js.yml)), CodeQL static analysis and
+([build-ci.yml](.github/workflows/build-ci.yml)), CodeQL static analysis and
 secret scanning alongside it ([codeql.yml](.github/workflows/codeql.yml),
 [gitleaks.yml](.github/workflows/gitleaks.yml)), and the chaos sandbox
 nightly.

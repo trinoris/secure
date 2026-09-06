@@ -41,7 +41,7 @@ each bug was. `SANDBOX_WORKFLOW`
 hook), `chaos/actors/driver.mjs` (`targetRef()`/`ensureTargetRef()`,
 `orchestratorReviewRound()`/`reviewAndMaybeMerge()`/`landReviewedMerge()`)
 and `chaos/agents/attacker.mjs` (`TARGET_REF`, `attackDirectMasterBypass`).
-`.github/workflows/node.js.yml`'s `chaos` job runs all three as a
+`.github/workflows/build-ci.yml`'s `chaos` job runs all three as a
 `fail-fast: false` matrix; a new `chaos-publish` job assembles all three
 legs' results into one site, and `chaos/viewer/index.html` renders the
 three-way comparison this whole spec exists to make legible. The
@@ -268,6 +268,21 @@ collaborator/operator round completed. Signing alone, with zero review
 process, fully stops an attacker who was never a recipient — the review
 workflow (W1 vs. W2 vs. W3) and the signing gate are genuinely
 independent axes, not one dimension.
+
+**Since then: wired into the GitHub Actions matrix and the viewer.**
+`.github/workflows/build-ci.yml`'s `chaos` job's matrix is now
+`[direct-master, working-branch, pr-gated, direct-master-signed]` (four
+legs, not three — the earlier "runs all three as a `fail-fast: false`
+matrix" language above describes this spec's original W1/W2/W3
+confirmation specifically, not the matrix as it stands today), and
+`chaos/viewer/index.html` has a fourth `wf-card` and `MODES` entry for it.
+Kept in the same warning tier as W1/W2 in the "hard invariant violated"
+check, not promoted to `pr-gated`'s hard-failure tier — every local run so
+far has held clean, but it hasn't earned `pr-gated`'s own multi-run
+GitHub Actions confirmation history yet. Also renamed the workflow file
+itself, `.github/workflows/node.js.yml` → `build-ci.yml`, matching its
+own `name: Build CI` — every reference to the old filename across this
+project's docs was updated in the same change.
 
 ## Where a "merge request role" is even possible
 

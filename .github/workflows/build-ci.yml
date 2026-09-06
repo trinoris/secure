@@ -41,11 +41,15 @@ jobs:
   # models (specs/chaotests/03-orchestrator.md): direct-master (W1, no
   # gate at all), working-branch (W2, gated only at the promotion to
   # master), pr-gated (W3, every change reviewed before master ever
-  # moves). Each is its own matrix leg, `fail-fast: false` — W1 and W2 are
-  # *expected* to sometimes fail their own "hard invariant violated" check
-  # below (that's the whole comparison this exists to make), and one
+  # moves), direct-master-signed (W4, no review workflow at all, but every
+  # push must be signed by a registered recipient — isolates whether
+  # signing alone stops an attacker with zero review process). Each is its
+  # own matrix leg, `fail-fast: false` — W1, W2, and W4 are all still
+  # newer/less battle-tested than W3's own long confirmation history, so
+  # none of them fail the job on their own the way `pr-gated` does (see
+  # the "Check whether a hard invariant was violated" step below), and one
   # mode's expected red must never cancel the others mid-run. `chaos-
-  # publish` (below) assembles all three legs' results into one Pages
+  # publish` (below) assembles all four legs' results into one Pages
   # site regardless of which legs failed.
   #
   # Deliberately nightly + manual only, never on push/PR: this is a several-
@@ -61,7 +65,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        workflow: [direct-master, working-branch, pr-gated]
+        workflow: [direct-master, working-branch, pr-gated, direct-master-signed]
     env:
       CHAOS_DURATION_SECONDS: 180
       VERIFIER_STARTUP_GRACE_SECONDS: 20
@@ -112,21 +116,27 @@ jobs:
       # Last step, deliberately: publishing above must happen regardless
       # of outcome. Failing here just makes a violated run show red on the
       # schedule/dispatch history, for *this leg only* (`fail-fast: false`
-      # keeps the other two workflows running and publishing regardless)
-      # — see the job comment for why this can never affect a push/PR
-      # run's status, and specs/chaotests/03-orchestrator.md's "Predicted
-      # plaintext-leak shape" table for which legs are expected to fail.
-      # Job status here is "did the sandbox produce a trustworthy result",
-      # not "did an invariant hold" — those are the same question only
-      # for `pr-gated`, the one workflow with a review gate at all.
-      # direct-master/working-branch violating an invariant is the
-      # expected, unsurprising result of having no gate (specs/chaotests/
+      # keeps the other legs running and publishing regardless) — see the
+      # job comment for why this can never affect a push/PR run's status,
+      # and specs/chaotests/03-orchestrator.md's "Predicted plaintext-leak
+      # shape" table for which legs are expected to fail. Job status here
+      # is "did the sandbox produce a trustworthy result", not "did an
+      # invariant hold" — those are the same question only for `pr-gated`,
+      # the one workflow with a review gate at all. direct-master/
+      # working-branch violating an invariant is the expected,
+      # unsurprising result of having no gate (specs/chaotests/
       # 03-orchestrator.md's whole comparison exists to show exactly
       # that) — real data for the viewer to display, not a build failure
       # to page anyone over. `pr-gated` failing this check is the one
       # genuinely alarming case: it's the mode this project claims should
       # never violate an invariant, so a violation there is a real
       # regression in the review logic, and stays a hard job failure.
+      # `direct-master-signed` (W4) is deliberately kept in the warning
+      # tier alongside W1/W2 for now, not promoted to `pr-gated`'s hard-
+      # failure tier — every local run so far has held clean, but it
+      # hasn't earned the same real-run confirmation history yet
+      # (specs/chaotests/03-orchestrator.md's own "Since then" note is
+      # explicit that this is local-only so far); revisit once it has.
       - name: Check whether a hard invariant was violated
         if: always()
         run: |
@@ -144,8 +154,8 @@ jobs:
             echo "::warning::A hard invariant was violated under ${{ matrix.workflow }} — expected for a workflow with no review gate; see the deployed viewer for the actual result, this job's status intentionally doesn't reflect it."
           fi
 
-  # Assembles all three matrix legs' results into one site and publishes
-  # it — `if: always()` because W1/W2 failing their own invariant check
+  # Assembles all four matrix legs' results into one site and publishes
+  # it — `if: always()` because W1/W2/W4 failing their own invariant check
   # above is the expected, interesting result this whole comparison
   # exists to surface, never a reason to skip publishing it.
   chaos-publish:
@@ -176,7 +186,7 @@ jobs:
         run: |
           mkdir -p site
           cp chaos/viewer/index.html site/index.html
-          for workflow in direct-master working-branch pr-gated; do
+          for workflow in direct-master working-branch pr-gated direct-master-signed; do
             mkdir -p "site/$workflow"
             src="downloaded/chaos-result-$workflow-${{ github.run_id }}"
             if [ -d "$src" ]; then

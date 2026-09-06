@@ -30,7 +30,7 @@ depends on (`attempted`, `technique`/`action`, `missingCommits`/
 `decryptFailures` as arrays, etc.) were cross-checked directly against
 real `report.jsonl`/`verifier-result.json` output from those runs — not
 just read from the source, actually diffed against real data. The auto-
-load path (`tryLoadPublishedRun()`) and the `.github/workflows/node.js.yml`
+load path (`tryLoadPublishedRun()`) and the `.github/workflows/build-ci.yml`
 `chaos`/`deploy-pages` jobs that feed it are new and **not yet verified
 end to end** — the workflow YAML parses and the sandbox mechanics it
 drives are proven, but the actual GitHub Pages deploy has never run (that
@@ -97,7 +97,7 @@ At boot, before falling back to the demo, `tryLoadPublishedRun()` tries
 `fetch('./report.jsonl')` and `fetch('./verifier-result.json')` — same-
 directory siblings, `cache: 'no-store'` so a redeploy is never served
 stale. This is what makes the `chaos` job in
-`.github/workflows/node.js.yml` work: it copies `chaos/viewer/index.html`
+`.github/workflows/build-ci.yml` work: it copies `chaos/viewer/index.html`
 to `site/index.html` alongside the run's own `report.jsonl` and
 `verifier-result.json`, and GitHub Pages serves the three as one static
 site — so the published page shows the actual latest nightly run, no
@@ -247,7 +247,7 @@ spec only covers how that result gets rendered.
   pairs side by side (e.g. before/after a fix) has no supporting UI today.
 - **Run history.** The published GitHub Pages site (see "Auto-loading a
   published run" above) always shows only the *latest* nightly run —
-  `.github/workflows/node.js.yml`'s Pages deploy overwrites the same site
+  `.github/workflows/build-ci.yml`'s Pages deploy overwrites the same site
   each time. There's no archive of past runs to compare trends against
   (is invariant 1 violated every night, or was last night's T1-driven
   violation new?). `actions/upload-artifact`'s per-run zip (90-day

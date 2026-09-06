@@ -64,7 +64,7 @@ specific things most likely to need a second pass.
 
 **Later correction: since verified end-to-end on real infrastructure.**
 The above is the original build-time note and is kept for its own record,
-but it's stale — GitHub Actions' `chaos` job (`.github/workflows/node.js.yml`)
+but it's stale — GitHub Actions' `chaos` job (`.github/workflows/build-ci.yml`)
 has since run this stack for real, more than once, on real Docker (not
 WSL), including a full `docker compose up --build` and a real verifier
 audit against a real fresh clone. The genuinely-unverified list above
