@@ -1,61 +1,19 @@
 {
-  "name": "@trinoris/securegit",
-  "version": "0.1.0",
-  "description": "Client-side Git encryption: transparent AES-256-GCM clean/smudge filter with envelope keys, multi-recipient sharing and offline recovery",
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "repository": {
-    "url": "https://github.com/trinoris/securegit.git"
-  },
-  "bin": {
-    "securegit": "./dist/bin/securegit.js"
-  },
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./crypto": {
-      "types": "./dist/crypto.d.ts",
-      "import": "./dist/crypto.js"
-    }
-  },
-  "engines": {
-    "node": ">=18"
-  },
-  "files": [
-    "dist",
-    "src",
-    "README.md",
-    "LICENSE"
+  "name": "trinoris-securegit-workspace",
+  "private": true,
+  "description": "Workspace root for @trinoris/securegit and @trinoris/securelib. Not published — see packages/securegit and packages/securelib for the real packages.",
+  "workspaces": [
+    "packages/*"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "build:securelib": "npm run build --workspace=packages/securelib",
+    "build": "npm run build:securelib && npm run build --workspace=packages/securegit",
+    "clean": "npm run clean --workspaces --if-present",
+    "typecheck": "npm run build:securelib && npm run typecheck --workspaces",
+    "test": "npm run build:securelib && npm run test --workspaces",
+    "test:integration": "npm run build:securelib && npm run test:integration --workspace=packages/securegit",
     "chaos:sandbox": "docker compose -f chaos/docker-compose.yml up --build -d && docker compose -f chaos/docker-compose.yml wait verifier; docker compose -f chaos/docker-compose.yml logs verifier; docker compose -f chaos/docker-compose.yml down -v"
   },
-  "keywords": [
-    "git",
-    "encryption",
-    "clean-smudge",
-    "aes-gcm",
-    "secrets"
-  ],
   "author": "TRINORIS",
-  "license": "MIT",
-  "devDependencies": {
-    "@types/node": "^26.4.0",
-    "@vitest/coverage-v8": "^4.1.10",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
-  }
+  "license": "MIT"
 }

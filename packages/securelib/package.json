@@ -1,0 +1,80 @@
+{
+  "name": "@trinoris/securelib",
+  "version": "0.1.0",
+  "description": "Transport-agnostic envelope encryption core: envelope format, key hierarchy, pluggable KeyProvider port, multi-recipient sharing, and offline recovery. Extracted from @trinoris/securegit.",
+  "type": "module",
+  "repository": {
+    "url": "https://github.com/trinoris/securegit.git",
+    "directory": "packages/securelib"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "exports": {
+    "./crypto": {
+      "types": "./dist/crypto.d.ts",
+      "import": "./dist/crypto.js"
+    },
+    "./envelope": {
+      "types": "./dist/envelope.d.ts",
+      "import": "./dist/envelope.js"
+    },
+    "./provider": {
+      "types": "./dist/provider.d.ts",
+      "import": "./dist/provider.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js"
+    },
+    "./identity": {
+      "types": "./dist/identity.d.ts",
+      "import": "./dist/identity.js"
+    },
+    "./keyring": {
+      "types": "./dist/keyring.d.ts",
+      "import": "./dist/keyring.js"
+    },
+    "./recipients": {
+      "types": "./dist/recipients.d.ts",
+      "import": "./dist/recipients.js"
+    },
+    "./recovery": {
+      "types": "./dist/recovery.d.ts",
+      "import": "./dist/recovery.js"
+    },
+    "./session": {
+      "types": "./dist/session.d.ts",
+      "import": "./dist/session.js"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "encryption",
+    "envelope",
+    "aes-gcm",
+    "key-management"
+  ],
+  "author": "TRINORIS",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

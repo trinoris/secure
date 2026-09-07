@@ -29,7 +29,8 @@ import { join } from 'node:path';
 import { git, runBinary, sleep } from '../lib/proc.mjs';
 import { say } from '../lib/log.mjs';
 import { waitFor } from '../lib/wait-for.mjs';
-import { looksLikeEnvelope } from '/app/dist/envelope.js';
+// envelope.ts moved to @trinoris/securelib (ARCHITECTURE.md).
+import { looksLikeEnvelope } from '/app/node_modules/@trinoris/securelib/dist/envelope.js';
 
 const REMOTE_URL = process.env.REMOTE_URL ?? 'git://remote/repo.git';
 const WORK_DIR = process.env.WORK_DIR ?? '/verify-clone';

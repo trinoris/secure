@@ -1,8 +1,17 @@
 name: Release
 
 # Triggered only by pushing a version tag — nothing here runs on an
-# ordinary push to master. Bump package.json's "version", commit, then:
+# ordinary push to master. Bump BOTH packages/securelib/package.json's and
+# packages/securegit/package.json's "version" (kept in lockstep — see the
+# tag-verification step below), commit, then:
 #   git tag v0.1.0 && git push --tags
+#
+# Since the extraction into @trinoris/securelib (ARCHITECTURE.md): this is
+# a two-package npm workspace, not one package. The root package.json is
+# a private workspace root with no version of its own — it is never
+# published, and `npm publish` is run per-workspace instead, in dependency
+# order (securelib before securegit, since a freshly `npm install`ed
+# securegit needs securelib to already be resolvable on the registry).
 on:
   push:
     tags:
@@ -18,12 +27,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Verify the tag matches package.json's version
+      - name: Verify the tag matches both packages' versions
         run: |
           tag_version="${GITHUB_REF_NAME#v}"
-          pkg_version=$(node -p "require('./package.json').version")
-          if [ "$tag_version" != "$pkg_version" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg_version"
+          securelib_version=$(node -p "require('./packages/securelib/package.json').version")
+          securegit_version=$(node -p "require('./packages/securegit/package.json').version")
+          if [ "$tag_version" != "$securelib_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match packages/securelib's version $securelib_version"
+            exit 1
+          fi
+          if [ "$tag_version" != "$securegit_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match packages/securegit's version $securegit_version"
             exit 1
           fi
 
@@ -31,8 +45,8 @@ jobs:
         with:
           node-version: '22.x'
           cache: 'npm'
-          # GitHub Packages, not the public npm registry — package.json's
-          # publishConfig.registry already points here too; both are set,
+          # GitHub Packages, not the public npm registry — both packages'
+          # publishConfig.registry already point here too; all three set,
           # which is the documented belt-and-suspenders pattern.
           registry-url: 'https://npm.pkg.github.com'
           scope: '@trinoris'
@@ -42,14 +56,21 @@ jobs:
       - run: npm run build
       - run: npm test
 
-      - name: Publish to GitHub Packages
-        run: npm publish
+      - name: Publish @trinoris/securelib to GitHub Packages
+        run: npm publish --workspace=packages/securelib
         env:
           # The default GITHUB_TOKEN can publish here because the repo now
           # lives under the same org (trinoris) as the package's own scope
           # (@trinoris) — GitHub Packages requires that match. No separate
           # PAT/secret needed, unlike when this repo was under a different
           # owner than the package scope.
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish @trinoris/securegit to GitHub Packages
+        # After securelib, not in parallel — securegit's own package.json
+        # dependency needs securelib already resolvable on the registry.
+        run: npm publish --workspace=packages/securegit
+        env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create GitHub Release

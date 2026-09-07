@@ -1,10 +1,13 @@
 # Architecture: toward `@trinoris/securelib`
 
-**Status: PROPOSED. Nothing in this document has been executed yet** — no
-package has been split, no code has moved, no new npm package exists. This
-is the target shape and the reasoning for it, written down before the
-migration starts, the same way this project writes a spec before building
-a feature.
+**Status: Phase 1 DONE — real npm workspaces, real package split, real
+green build/typecheck/test/integration-test, verified on a real Docker
+build of the chaos sandbox image too.** Phases 2–5 below are still
+proposed, not executed. This document originally described the target
+shape before starting; the "Current state" and migration-plan sections
+below are now updated to say what actually happened during Phase 1,
+including two real corrections the original plan got wrong (see
+"Corrections found during Phase 1").
 
 ## The core insight
 
@@ -29,28 +32,106 @@ useful to a tool that isn't Git as it is to this one. Naming it
 `securegit-piv` would have been premature coupling to a name, not just a
 package.
 
-## Current state
+## Current state — real, as of Phase 1
 
-One package, `@trinoris/securegit`, no workspace tooling. But the
-module split described above already exists inside `src/`:
+Two packages in one npm-workspaces monorepo (`packages/securelib`,
+`packages/securegit`; root `package.json` is a private workspace root).
+The module split below is what actually landed, not a projection — it
+corrects two things the original version of this document got wrong,
+found only by doing the split for real and following the actual import
+graph rather than a quick grep (see "Corrections found during Phase 1"):
 
-| Already git-agnostic (operates on bytes, keys, and provider abstractions) | Genuinely Git-specific |
+| `packages/securelib/src/` (git-agnostic) | `packages/securegit/src/` (genuinely Git-specific) |
 |---|---|
 | `crypto.ts` — derivation, AEAD | `filter.ts` — `clean`/`smudge`/`textconv`, the Git filter contract |
 | `envelope.ts` — `seal()`/`unseal()`, wire format | `install.ts` — `.gitattributes`, `.git/config` |
-| `provider.ts` — the `KeyProvider` port, `PassphraseFileProvider` | `merge.ts` — the Git merge driver |
+| `provider.ts` — the `KeyProvider` port, `PassphraseFileProvider`, **and now `KeySource`/`KeyGeneration`** (moved from `filter.ts` — see below) | `merge.ts` — the Git merge driver |
 | `keyring.ts` | `cli.ts` — mostly; a few commands (`clean`/`smudge`/`merge`/`filter-process`) are Git-only, the rest (`key rotate`, `identity`, `encrypt`/`decrypt`) are not |
-| `recipients.ts` — multi-recipient wrap/unwrap | `verify.ts`'s `--history` mode — walks `git log` |
-| `recovery.ts` — export/import recovery codes | the entire `chaos/` sandbox — inherently about Git workflows |
-| `identity.ts` | |
+| `recipients.ts` — multi-recipient wrap/unwrap | `verify.ts`, **the whole module, not just `--history`** (see below) |
+| `recovery.ts` — export/import recovery codes | `pktline.ts`, `process.ts` — `filter-process`'s wire protocol |
+| `identity.ts` | `index.ts` — the package's own curated re-export barrel |
+| `session.ts` — **moved here; the original table missed this one entirely** | the entire `chaos/` sandbox — inherently about Git workflows |
 
-**One real seam still needs cutting, not zero.** `config.ts`'s `init()`
-refuses unless `isGitRepo()` finds a `.git` — the one place a nominally
-git-agnostic module actually checks for Git. A `securelib` consumer that
-isn't a git repository (a plain folder of documents, for
-`@trinoris/securedoc` below) needs its own, different "is this a valid
-place to initialise" check, not this one. Small, identified, not yet
-done.
+### Corrections found during Phase 1
+
+Both found by tracing the actual import graph
+(`grep -oP "from '\./\K[a-zA-Z_-]+(?=\.js')"` across every file), not by
+re-reading the original quick-grep table and trusting it:
+
+- **`session.ts` belongs in `securelib`, not listed anywhere in the
+  original table.** It's a generic "cache an unwrapped key by repoId,
+  with a TTL, on disk" mechanism — its own doc comment motivates it with
+  "Git runs filters non-interactively," but nothing in its actual
+  mechanism is Git-specific. A future `securedoc` wants the exact same
+  "unlock once, stay unlocked for N hours" behavior.
+- **`verify.ts` doesn't split cleanly into a git-agnostic base and a
+  git-specific `--history` mode — the whole module is git-specific.**
+  The original table claimed only `--history` (which walks `git log`)
+  was the git-specific part. In fact the *base* `verify()` also imports
+  `EXCLUSION_LINE`/`RESIDUE_SUFFIXES` directly from `install.ts` — the
+  `.gitattributes` exclusion pattern and residue-file suffixes — so even
+  the "always-on" checks are inherently about Git's own attribute
+  mechanism. `verify.ts` stayed in `securegit`, whole.
+- **A real backward dependency existed and had to be cut, not just
+  moved around:** `keyring.ts`, `recipients.ts`, and `session.ts` (all
+  now in `securelib`) imported the `KeySource`/`KeyGeneration` types from
+  `filter.ts` (Git-specific, staying in `securegit`) — a git-agnostic
+  module depending on a git-specific one for a type that was never
+  actually about Git. Fixed by moving both interfaces into `provider.ts`
+  (`securelib`) — "what a caller gets after a provider successfully
+  unwraps a generation" is a `securelib`-port concept, not a filter one —
+  and having `filter.ts` import them from there instead of defining them.
+- **Four tests were genuinely cross-package integration tests, not
+  unit tests of either module alone**, and moved accordingly: `keyring.test.ts`'s
+  and `session.test.ts`'s own `"bridges to filter.ts's KeySource
+  contract"` blocks (real `clean`/`smudge` calls against a real unlocked
+  keyring/session) moved out of `securelib` into a new
+  `packages/securegit/src/filter.bridge.test.ts` — they were exercising
+  `securegit`'s own filter contract, using `securelib`'s keyring/session
+  as the input, so they belong on the consumer side.
+- **`package.test.ts`'s T11 (supply-chain) checks had to be redesigned,
+  not just relocated** — the single-package version asserted "zero
+  dependencies of any kind" and "every import is relative or `node:`."
+  Now split: `securelib`'s copy keeps that absolute standard (it's the
+  package that actually holds key material — no exception, ever);
+  `securegit`'s copy allows exactly one dependency,
+  `@trinoris/securelib`, and documents why that's not the supply-chain
+  risk T11 exists to catch (same repo, same CI, same review process).
+  The "no raw `Buffer#equals()` outside crypto/envelope/identity/
+  recovery.ts" and "no raw fingerprint `===`" checks split the same way,
+  each now scoped to the files actually present on its own side.
+- **The chaos sandbox's Docker image had hardcoded absolute imports**
+  (`/app/dist/identity.js`, `/app/dist/crypto.js`, `/app/dist/envelope.js`,
+  `/app/dist/session.js`, `/app/dist/config.js`, across
+  `chaos/lib/paths.mjs`, `chaos/remote/pre-receive-check.mjs`, and
+  `chaos/verifier/verify.mjs`) baked in from the single-package era.
+  Fixed: `chaos/Dockerfile` now builds both workspace packages (in
+  explicit order — see below) and copies `securelib`'s own `dist/` to
+  `/app/node_modules/@trinoris/securelib/dist`, mirroring where the
+  workspace symlink puts it during the build stage; the three `.mjs`
+  files' absolute imports were repointed there. **Confirmed with a real
+  `docker build` plus a real container run** — every one of the five
+  re-pointed imports resolves and exports the expected function inside
+  the built image, and `chaos/verifier/verify.mjs` starts up normally
+  when imported directly.
+- **`npm run build --workspaces` does not guarantee build order** — it
+  ran `securegit`'s build before `securelib`'s at least once, which
+  fails outright (`securegit`'s own build needs `securelib`'s compiled
+  `.d.ts`/`.js` already present to resolve `@trinoris/securelib/*`
+  imports). Root `package.json`'s `build`/`typecheck`/`test`/
+  `test:integration` scripts, and `chaos/Dockerfile`'s build stage, now
+  all build `securelib` explicitly first, every time — never left to
+  `--workspaces`'s own ordering.
+
+**One real seam still not cut — correctly deferred to Phase 2, not
+forgotten.** `config.ts`'s `init()` still refuses unless `isGitRepo()`
+finds a `.git` — the one place a nominally git-agnostic module actually
+checks for Git. A `securelib` consumer that isn't a git repository (a
+plain folder of documents, for `@trinoris/securedoc` below) needs its
+own, different "is this a valid place to initialise" check, not this
+one. Untouched in Phase 1 deliberately — cutting it was scoped as its
+own, separate step (Phase 2) from the start, precisely so Phase 1 could
+stay a pure relocation with zero behavior change, verified as such.
 
 ## Target: three kinds of package
 
@@ -114,15 +195,23 @@ hierarchy, built at different times by people making different
 incidental choices, needing to be reconciled into one shared library
 after the fact — real, avoidable risk for no benefit.
 
-## Migration plan (phased, none of it started)
+## Migration plan
 
-1. **Introduce workspace tooling, no behavior change.** `packages/securelib/`
-   and `packages/securegit/` (npm or pnpm workspaces — not yet decided
-   which), moving the git-agnostic modules into `securelib` verbatim, with
-   `securegit` depending on it via a workspace link. Every existing test
-   moves with the module it tests. `npm test`, `npm run build`, and every
-   CLI command's behavior stay byte-for-byte identical — this phase is a
-   file-mover and an import-path-updater, not a rewrite.
+1. **DONE. Introduce workspace tooling, no behavior change.**
+   `packages/securelib/` and `packages/securegit/`, npm workspaces (the
+   built-in tool, not pnpm — no new dependency needed, and npm ≥7 already
+   ships with every environment this project already requires). Every
+   existing test moved with the module it tests, plus the corrections
+   above. Verified, not asserted: `npm run build`, `npm run typecheck`,
+   `npm test` (754 tests: 388 in `securegit`, 366 in `securelib`, up from
+   748 in the single package — the +6 are `filter.bridge.test.ts`'s tests,
+   moved intact, none lost or duplicated), and
+   `npm run test:integration` (40 tests, drives a real `git` binary) all
+   pass, from the workspace root, exactly as CI invokes them. The chaos
+   sandbox's Docker image builds and its five re-pointed absolute imports
+   were confirmed resolving inside a real running container. Every CLI
+   command's behavior is unchanged — this was a file-mover and an
+   import-path-updater, confirmed to be exactly that and nothing more.
 2. **Cut the one real seam.** `config.ts`'s `isGitRepo()` check becomes
    something the `securegit`-side caller supplies (e.g. `init()` takes a
    `validateEnvironment` callback, or `securelib`'s own `init()` drops the
@@ -142,9 +231,11 @@ after the fact — real, avoidable risk for no benefit.
    consumer of `securelib`, proving the extraction was worth doing rather
    than merely aesthetic.
 
-No phase above has started. Phase 1 is the natural next step whenever
-this is picked up — it's the only phase with no design decisions left
-to make.
+Phase 1 is done, verified as described above. Phases 2–5 have not
+started. Phase 2 (cutting `config.ts`'s `isGitRepo()` seam) is the
+natural next step — the only remaining phase with no design decisions
+left to make; phase 3 onward depend on choices (publishing, provider
+package scope) worth revisiting when actually reached.
 
 ## Relationship to other specs
 

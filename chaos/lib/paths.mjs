@@ -1,14 +1,19 @@
-// Re-exports the *real* path-resolution logic from the built package
-// (/app/dist, baked into the shared image by chaos/Dockerfile) instead of
+// Re-exports the *real* path-resolution logic from the built packages
+// (baked into the shared image by chaos/Dockerfile) instead of
 // reimplementing it here — a second, drifted copy of
 // resolveSessionPath()/resolveKeyringPath() would be exactly the kind of
 // thing that quietly stops matching reality. Absolute-path ESM specifiers
 // resolve as file URLs in Node, so this works without any package.json
 // wiring between /chaos and /app.
+//
+// session.ts/config.ts/identity.ts all moved to @trinoris/securelib
+// (ARCHITECTURE.md) — the Dockerfile now copies that package's own dist/
+// to /app/node_modules/@trinoris/securelib/dist, mirroring where the
+// workspace symlink puts it during the build stage.
 
-export { resolveSessionPath } from '/app/dist/session.js';
-export { resolveKeyringPath, configPath, readConfig } from '/app/dist/config.js';
-export { identityPath } from '/app/dist/identity.js';
+export { resolveSessionPath } from '/app/node_modules/@trinoris/securelib/dist/session.js';
+export { resolveKeyringPath, configPath, readConfig } from '/app/node_modules/@trinoris/securelib/dist/config.js';
+export { identityPath } from '/app/node_modules/@trinoris/securelib/dist/identity.js';
 
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
