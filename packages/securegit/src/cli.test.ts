@@ -82,6 +82,17 @@ describe('init', () => {
     }
   });
 
+  it('accepts a worktree-style .git file, not only a .git directory', async () => {
+    const worktree = await mkdtemp(join(tmpdir(), 'securegit-cli-worktree-'));
+    try {
+      await writeFile(join(worktree, '.git'), 'gitdir: /elsewhere/.git/worktrees/x\n', 'utf8');
+      const h = harness({ cwd: worktree });
+      expect(await h.run(['init'])).toBe(0);
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
   it('exits 4 the second time, without touching the first config', async () => {
     const h = harness();
     await h.run(['init']);

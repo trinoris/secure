@@ -40,17 +40,6 @@ export function generateRepoId(): string {
   return randomBytes(16).toString('hex');
 }
 
-async function isGitRepo(repoDir: string): Promise<boolean> {
-  try {
-    // A worktree's `.git` is a file (`gitdir: …`), not a directory — either
-    // counts, since both mean "this is a real Git checkout".
-    await stat(join(repoDir, '.git'));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** True when `child` is `parent` itself or nested under it. */
 function isInside(child: string, parent: string): boolean {
   const rel = relative(parent, child);
@@ -75,12 +64,6 @@ export async function initConfig(
   repoDir: string,
   opts: InitConfigOptions = {},
 ): Promise<RepoConfig> {
-  if (!(await isGitRepo(repoDir))) {
-    throw new ConfigError(
-      `securegit: ${repoDir} is not a Git repository (no .git found)`,
-    );
-  }
-
   const padTo = opts.padTo ?? 0;
   if (!Number.isInteger(padTo) || padTo < 0) {
     throw new ConfigError(`securegit: padTo must be a non-negative integer, got ${padTo}`);

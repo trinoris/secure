@@ -95,22 +95,12 @@ describe('initConfig()', () => {
     }
   });
 
-  it('refuses to run outside a git repository', async () => {
+  it('does not require a .git to exist — a git-agnostic library has no business assuming one; that check is securegit\'s own (cli.ts), not this module\'s', async () => {
     const notGit = await mkdtemp(join(tmpdir(), 'securegit-config-'));
     try {
-      await expect(initConfig(notGit)).rejects.toBeInstanceOf(ConfigError);
+      await expect(initConfig(notGit)).resolves.toBeDefined();
     } finally {
       await rm(notGit, { recursive: true, force: true });
-    }
-  });
-
-  it('accepts a worktree-style .git file, not only a .git directory', async () => {
-    const worktree = await mkdtemp(join(tmpdir(), 'securegit-config-'));
-    try {
-      await writeFile(join(worktree, '.git'), 'gitdir: /elsewhere/.git/worktrees/x\n', 'utf8');
-      await expect(initConfig(worktree)).resolves.toBeDefined();
-    } finally {
-      await rm(worktree, { recursive: true, force: true });
     }
   });
 

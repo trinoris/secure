@@ -9,7 +9,7 @@
 
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFile, readdir, writeFile, unlink } from 'node:fs/promises';
+import { readFile, readdir, writeFile, unlink, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -314,7 +314,29 @@ async function loadKeys(io: CliIO): Promise<Loaded> {
 // repository lifecycle
 // ---------------------------------------------------------------------------
 
+/**
+ * `initConfig()` itself (`@trinoris/securelib`) no longer checks this —
+ * ARCHITECTURE.md's Phase 2: a git-agnostic library has no business
+ * assuming its caller is a git repository. `securegit` is the consumer
+ * that actually requires one, so the check lives here instead.
+ */
+async function isGitRepo(repoDir: string): Promise<boolean> {
+  try {
+    // A worktree's `.git` is a file (`gitdir: …`), not a directory — either
+    // counts, since both mean "this is a real Git checkout".
+    await stat(join(repoDir, '.git'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function cmdInit(args: string[], io: CliIO): Promise<number> {
+  if (!(await isGitRepo(io.cwd))) {
+    io.stderr(`securegit: ${io.cwd} is not a Git repository (no .git found)`);
+    return EXIT_USAGE;
+  }
+
   const bindPath = args.includes('--bind-path');
 
   const padToIdx = args.indexOf('--pad-to');

@@ -1,13 +1,13 @@
 # Architecture: toward `@trinoris/securelib`
 
-**Status: Phase 1 DONE — real npm workspaces, real package split, real
-green build/typecheck/test/integration-test, verified on a real Docker
-build of the chaos sandbox image too.** Phases 2–5 below are still
-proposed, not executed. This document originally described the target
-shape before starting; the "Current state" and migration-plan sections
-below are now updated to say what actually happened during Phase 1,
-including two real corrections the original plan got wrong (see
-"Corrections found during Phase 1").
+**Status: Phases 1 and 2 DONE — real npm workspaces, real package split,
+`config.ts`'s `isGitRepo()` seam cut, real green
+build/typecheck/test/integration-test, verified on a real Docker build of
+the chaos sandbox image too.** Phases 3–5 below are still proposed, not
+executed. This document originally described the target shape before
+starting; the "Current state" and migration-plan sections below are now
+updated to say what actually happened, including corrections the original
+plan got wrong (see "Corrections found during Phase 1").
 
 ## The core insight
 
@@ -123,15 +123,14 @@ re-reading the original quick-grep table and trusting it:
   all build `securelib` explicitly first, every time — never left to
   `--workspaces`'s own ordering.
 
-**One real seam still not cut — correctly deferred to Phase 2, not
-forgotten.** `config.ts`'s `init()` still refuses unless `isGitRepo()`
-finds a `.git` — the one place a nominally git-agnostic module actually
-checks for Git. A `securelib` consumer that isn't a git repository (a
-plain folder of documents, for `@trinoris/securedoc` below) needs its
-own, different "is this a valid place to initialise" check, not this
-one. Untouched in Phase 1 deliberately — cutting it was scoped as its
-own, separate step (Phase 2) from the start, precisely so Phase 1 could
-stay a pure relocation with zero behavior change, verified as such.
+**The one real seam — cut in Phase 2.** `config.ts`'s `initConfig()` no
+longer knows what Git is at all; the `isGitRepo()` check (and its
+worktree-file handling) moved into `securegit`'s own `cli.ts`, called by
+`cmdInit()` before `initConfig()` is reached. `securelib` now genuinely
+has no opinion on what kind of directory it's initialising into — a
+future `@trinoris/securedoc` consumer supplies its own "is this a valid
+place to initialise" check (or none) at its own call site, exactly as
+`securegit` now does.
 
 ## Target: three kinds of package
 
@@ -212,11 +211,21 @@ after the fact — real, avoidable risk for no benefit.
    were confirmed resolving inside a real running container. Every CLI
    command's behavior is unchanged — this was a file-mover and an
    import-path-updater, confirmed to be exactly that and nothing more.
-2. **Cut the one real seam.** `config.ts`'s `isGitRepo()` check becomes
-   something the `securegit`-side caller supplies (e.g. `init()` takes a
-   `validateEnvironment` callback, or `securelib`'s own `init()` drops the
-   check entirely and `securegit`'s wrapper adds it back) — the only
-   actual code change in this migration, everything else is relocation.
+2. **DONE. Cut the one real seam.** `initConfig()` in `securelib`'s
+   `config.ts` no longer checks for `.git` at all — that check (plus its
+   worktree-file handling) moved verbatim into a new `isGitRepo()` in
+   `securegit`'s `cli.ts`, called by `cmdInit()` before `initConfig()` is
+   even reached. Zero change to `securegit`'s own behavior or error
+   messages — the existing "exits 4 outside a git repository" test in
+   `cli.test.ts` passed unmodified; a new "accepts a worktree-style .git
+   file" test was added there to keep that coverage at the layer that now
+   owns the check. `securelib`'s `config.test.ts` lost its two git-specific
+   cases and gained one proving the opposite: `initConfig()` now succeeds
+   with no `.git` present at all — the actual evidence the seam is cut,
+   not just moved. Verified: `npm run build`, `npm run typecheck`,
+   `npm test` (754 tests: 389 in `securegit` (+1), 365 in `securelib`
+   (net −1) — same total, exactly accounted for), `npm run
+   test:integration` (40 tests) all pass.
 3. **Publish `@trinoris/securelib` as its own package.** Once the split
    builds and tests green with no behavioral diff, it graduates from
    "code living in a workspace" to "a real, independently versioned
@@ -231,11 +240,11 @@ after the fact — real, avoidable risk for no benefit.
    consumer of `securelib`, proving the extraction was worth doing rather
    than merely aesthetic.
 
-Phase 1 is done, verified as described above. Phases 2–5 have not
-started. Phase 2 (cutting `config.ts`'s `isGitRepo()` seam) is the
-natural next step — the only remaining phase with no design decisions
-left to make; phase 3 onward depend on choices (publishing, provider
-package scope) worth revisiting when actually reached.
+Phases 1 and 2 are done, verified as described above. Phases 3–5 have not
+started. Phase 3 (publishing `@trinoris/securelib` as its own
+independently-versioned package) is next, but depends on choices
+(registry, versioning cadence) worth revisiting when actually reached
+rather than deciding now.
 
 ## Relationship to other specs
 
