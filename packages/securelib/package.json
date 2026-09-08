@@ -23,6 +23,10 @@
       "types": "./dist/provider.d.ts",
       "import": "./dist/provider.js"
     },
+    "./registry": {
+      "types": "./dist/registry.d.ts",
+      "import": "./dist/registry.js"
+    },
     "./config": {
       "types": "./dist/config.d.ts",
       "import": "./dist/config.js"

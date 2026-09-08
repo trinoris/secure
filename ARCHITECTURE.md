@@ -164,11 +164,15 @@ not any one consumer's. Each is a `KeyProvider` implementation
 (`specs/securegit/06-key-provider-port.md`'s "Concrete designs" section
 has the crypto design for both) that plugs into `@trinoris/securelib`'s
 port — installable by `securegit` today, and by `securedoc` tomorrow,
-with no change to either provider package. A future `@trinoris/securelib-kms`
-is a candidate for the same treatment, though `kms-envelope`'s own design
-note already argues it can stay dependency-free enough to live inside
-`securelib` core itself (hand-rolled request signing, no cloud SDK) —
-worth deciding at implementation time, not speculatively here.
+with no change to either provider package. Both are ordinary sibling
+workspace packages under this repo's own `packages/*`, per
+`06-key-provider-port.md`'s "Loading a provider package without paying
+for it" — no separate repository or workspace of their own needed.
+`kms-envelope` is deliberately not a third companion package: its own
+design note settles that it stays dependency-free enough (hand-rolled
+request signing, no cloud SDK) to live inside `securelib` core itself,
+loaded eagerly like `passphrase-file`, not through the dynamic-`import()`
+path the two hardware providers need.
 
 ### `@trinoris/securedoc` — future, unscoped
 
@@ -236,6 +240,13 @@ after the fact — real, avoidable risk for no benefit.
    This is where the `kms-envelope`/`yubikey-piv`/`yubikey-fido2` design
    work from `06-key-provider-port.md` actually gets implemented — against
    a stable, published `securelib`, not against `securegit`'s internals.
+   Packaging is settled (`06-key-provider-port.md`'s "Loading a provider
+   package without paying for it"): `kms-envelope` ships inside
+   `securelib` core (`registry.ts`'s `BUILTIN` map); `yubikey-piv` and
+   `yubikey-fido2` are the only two real companion packages
+   (`packages/securelib-piv`, `packages/securelib-fido2`), loaded lazily
+   via `loadProvider()`'s dynamic `import()` by naming convention, never a
+   dependency of `securelib` or `securegit` themselves.
 5. **`@trinoris/securedoc`** (future, unscoped) becomes a second real
    consumer of `securelib`, proving the extraction was worth doing rather
    than merely aesthetic.

@@ -19,7 +19,10 @@ built now, see below), only the hardware/cloud provider types they'd
 otherwise have nothing real to add or remove. Three of those five now
 have a concrete design, not just a name: see "Concrete designs for the
 next three providers" below for `kms-envelope`, `yubikey-piv`, and
-`yubikey-fido2` — design only, no code yet.
+`yubikey-fido2` — design only, `KeyProvider` implementations not yet
+built. The loading mechanism they'll plug into *is* built, ahead of any
+of the three: `loadProvider()` in `registry.ts` — see "Loading a
+provider package without paying for it" below.
 
 `key add-provider`/`remove-provider`/`list` ([10](10-cli-contract.md)) are
 implemented as `addProvider()`/`removeProvider()` in `src/keyring.ts`.
@@ -360,11 +363,10 @@ holds: the core package's "zero runtime dependencies" claim
 ([README.md](../../README.md)) is a stated security property, not an
 incidental fact, and a hardware provider that genuinely needs native/
 external access shouldn't cost every user who never touches hardware
-providers a new dependency in their own supply chain. This needs a small,
-separate design of its own: a plugin convention (likely: an env var or
-`config.json` field naming an npm package the core `require()`s for
-additional providers at startup) — a smaller, independent design
-question from this provider's own crypto, not addressed further here.
+providers a new dependency in their own supply chain. See "Loading a
+provider package without paying for it" below for how a provider id
+resolves to its companion package without either core package ever
+depending on it.
 
 **Test plan:** a `PivCard` transport interface —
 `getPublicKey(slot): Promise<Buffer>`, `ecdh(slot, peerPublicKey, pin):
@@ -476,6 +478,118 @@ mechanism — they wrap for other people, and live in the repository rather
 than the keyring — but they follow the same rule: a repository must always
 have at least one non-custodial way back in.
 
+## Loading a provider package without paying for it
+
+The packaging question `yubikey-piv` and `yubikey-fido2` both raise above
+(an optional companion package, not a dependency of the core) but leave
+open. Settled here, now that
+[ARCHITECTURE.md](../../ARCHITECTURE.md)'s Phase 1 has actually happened:
+`@trinoris/securelib` lives at `packages/securelib` inside this same
+repository's own npm workspace (`packages/*`), not a separate one. That
+simplifies the packaging question this section originally deferred —
+the companion packages need no workspace of their own; they're siblings
+of `packages/securelib` and `packages/securegit` under the same glob:
+
+```
+packages/
+  securelib/           @trinoris/securelib        — core, zero deps: passphrase-file AND kms-envelope live here
+  securegit/            @trinoris/securegit         — CLI, depends on securelib
+  securelib-piv/        @trinoris/securelib-piv     — yubikey-piv, real PC/SC dependency
+  securelib-fido2/      @trinoris/securelib-fido2   — yubikey-fido2, real CTAP2/HID dependency
+```
+
+Only two companion packages, not three. `kms-envelope`'s own design
+above ("Zero new runtime dependencies is achievable, not just
+aspirational") already settles that it ships inside `securelib` core —
+hand-rolled SigV4/JWT request signing needs nothing PC/SC or CTAP2/HID
+don't already rule out avoiding. There's no honest reason to push it
+behind a dynamic import when it costs the core nothing to include
+directly, the same way `passphrase-file` is. This corrects
+[ARCHITECTURE.md](../../ARCHITECTURE.md)'s softer "worth deciding at
+implementation time" hedge on this point — the more detailed design
+above already decided it.
+
+Each PIV/FIDO2 package is an ordinary workspace package with its own
+`package.json`, depending on `@trinoris/securelib` (for the
+`KeyProvider` type and crypto primitives) the same way `securegit`
+already does. Neither is a dependency of `securelib` or `securegit` —
+that's the entire point: a user who never touches a YubiKey never
+installs PC/SC bindings, never mind whether they run `securegit` or
+some future non-Git `securelib` consumer.
+
+**The naming convention is the registry — no separate mapping to keep in
+sync.** A provider `id` (the same string already stored in the
+keyring's `wrapped[].provider` field, [05](05-key-hierarchy.md)) maps to
+its package by prefixing `@trinoris/securelib-`, stripped of its own
+`yubikey-` prefix (otherwise redundant under that scope):
+
+| provider `id` | companion package |
+|---|---|
+| `yubikey-piv` | `@trinoris/securelib-piv` |
+| `yubikey-fido2` | `@trinoris/securelib-fido2` |
+
+`passphrase-file` and `kms-envelope` need no entry — both are built into
+`securelib` itself, loaded eagerly, never through this path.
+
+```typescript
+// packages/securelib/src/registry.ts (not yet built)
+const BUILTIN: Record<string, () => KeyProvider> = {
+  'passphrase-file': () => new PassphraseFileProvider(...),
+  'kms-envelope': () => new KmsEnvelopeProvider(...),
+};
+
+const COMPANION_PACKAGE: Record<string, string> = {
+  'yubikey-piv': '@trinoris/securelib-piv',
+  'yubikey-fido2': '@trinoris/securelib-fido2',
+};
+
+export async function loadProvider(id: string, config: unknown): Promise<KeyProvider> {
+  const builtin = BUILTIN[id];
+  if (builtin) return builtin();
+
+  const pkg = COMPANION_PACKAGE[id];
+  if (!pkg) throw new ProviderError(`securegit: unknown provider id '${id}'`);
+
+  let mod: { createProvider(config: unknown): KeyProvider };
+  try {
+    mod = await import(pkg);
+  } catch (e) {
+    throw new ProviderError(
+      `securegit: provider '${id}' needs ${pkg}, which is not installed\n` +
+        `  action: npm install ${pkg}`,
+    );
+  }
+  return mod.createProvider(config);
+}
+```
+
+`import(pkg)` — a dynamic import of a package specifier, not a relative
+path — is what keeps this lazy: `securegit`'s own `package.json` never
+lists `@trinoris/securelib-piv` as a dependency, so it's simply not on
+disk unless a user installs it themselves, and the `import()` call is
+never reached unless a repository's keyring actually names that
+provider id. `securelib`'s own "zero runtime dependencies" claim
+survives intact — this registry ships inside `securelib`, but every
+`import()` target is optional, resolved only from the *consumer's* own
+`node_modules`, never `securelib`'s.
+
+Each companion package exports one function, `createProvider(config):
+KeyProvider`, matching the shape `loadProvider` expects — the same
+contract every `KeyProvider` implementation already satisfies
+(`provider.conformance.test.ts`), just behind one more layer of
+indirection so the core never has a static `import` naming a package it
+doesn't depend on.
+
+**Status: `registry.ts` and `loadProvider()` are built and tested** —
+`packages/securelib/src/registry.ts`, `@trinoris/securelib/registry`.
+Only `passphrase-file` is in `BUILTIN` for real today; `kms-envelope`
+joins it once `KmsEnvelopeProvider` itself is built. The two companion
+packages (`@trinoris/securelib-piv`, `@trinoris/securelib-fido2`)
+themselves don't exist yet — `loadProvider()` already gives an honest,
+actionable error for both (`npm install @trinoris/securelib-piv`, etc.),
+verified by `registry.test.ts` against the real absence of those
+packages on disk, not a mock.
+
 ## Test Cases
 
 | Test | Test File | Fixture | Status |
@@ -507,6 +621,11 @@ have at least one non-custodial way back in.
 | `YubikeyPivProvider` passes the full conformance suite against a `FakePivCard` | `src/provider.conformance.test.ts` | — | not built — design only, see "Concrete designs" above |
 | `YubikeyPivProvider.unwrap` throws a specific, actionable error when `ctx.interactive` is `false` | `src/provider.test.ts` | — | not built — design only |
 | `YubikeyFido2Provider` passes the full conformance suite against a `FakeFido2Authenticator` | `src/provider.conformance.test.ts` | — | not built — design only, see "Concrete designs" above |
+| `loadProvider('passphrase-file', ...)` resolves to a real, working provider — no dynamic `import()` needed | `src/registry.test.ts` | — | ✅ |
+| `loadProvider('yubikey-piv'/'yubikey-fido2', ...)` with the companion package absent throws a `npm install @trinoris/securelib-*` error, not a raw module-resolution error | `src/registry.test.ts` | — | ✅ |
+| `loadProvider()` with an unknown id rejects with `ProviderError`, distinctly from a missing companion package | `src/registry.test.ts` | — | ✅ |
+| Neither `securelib` nor `securegit` lists a companion package as a dependency (T11, `package.test.ts`'s existing exact-dependency-list check already enforces this — no dedicated test needed) | `src/package.test.ts` | — | ✅ |
+| `KmsEnvelopeProvider` is loaded via `registry.ts`'s `BUILTIN` map, not a dynamic `import()`, once built | `src/registry.test.ts` | — | not built — `KmsEnvelopeProvider` itself doesn't exist yet |
 
 ## Relationship to Other Specs
 
