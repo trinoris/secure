@@ -35,6 +35,14 @@
       "types": "./dist/aws-kms-backend.d.ts",
       "import": "./dist/aws-kms-backend.js"
     },
+    "./gcp-kms-backend": {
+      "types": "./dist/gcp-kms-backend.d.ts",
+      "import": "./dist/gcp-kms-backend.js"
+    },
+    "./azure-kms-backend": {
+      "types": "./dist/azure-kms-backend.d.ts",
+      "import": "./dist/azure-kms-backend.js"
+    },
     "./piv": {
       "types": "./dist/piv.d.ts",
       "import": "./dist/piv.js"

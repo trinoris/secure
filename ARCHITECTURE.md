@@ -248,17 +248,24 @@ after the fact — real, avoidable risk for no benefit.
    real cryptographic fake (`kms-envelope.ts`, `piv.ts`, `fido2.ts`) — a
    real bug caught along the way: `KmsEnvelopeProvider.unwrap()`
    originally trusted the wrapped payload's own `keyId` instead of
-   checking it against the caller's configured key. **`AwsKmsBackend`
-   (`aws-kms-backend.ts`) is also built** — hand-rolled SigV4 signing,
-   `node:crypto` + `node:https`, no SDK — structurally tested (deterministic,
-   sensitive to every input, well-formed `Authorization` header) but
-   **not verified against a real AWS KMS endpoint**: this environment has
-   no AWS credentials. A real-credential integration test is written and
-   ready (`describe.skipIf`) — run it against a real key before trusting
-   this in production. **What's left, not attempted because real hardware
+   checking it against the caller's configured key. **All three cloud
+   `KmsBackend`s are built**: `aws-kms-backend.ts` (hand-rolled SigV4),
+   `gcp-kms-backend.ts` (service-account JWT-bearer OAuth), and
+   `azure-kms-backend.ts` (Azure AD client-credentials; caller-supplied
+   AES-256-GCM IV packed with the tag into one opaque blob, a real bug
+   caught and fixed along the way — the first draft ignored the passed
+   `keyId` entirely and used vault/key/version fixed at construction
+   instead). GCP's JWT and Azure's AEAD framing are verified with real
+   cryptography offline (an actual RSA sign/verify pair; a fake vault
+   running real AES-256-GCM); AWS's SigV4 is checked only structurally,
+   since byte-exactness needs a live endpoint. **None of the three has
+   run against a real cloud account** — no credentials exist in this
+   environment. Each has a real-credential integration test written and
+   ready (`describe.skipIf`) — run one against a real key before trusting
+   it in production. **What's left, not attempted because real hardware
    is the only way to verify it and can never run in CI regardless:** the
    two real companion packages, `@trinoris/securelib-piv`/`-fido2` (PC/SC
-   and CTAP2/HID), plus `GcpKmsBackend`/`AzureKmsBackend`.
+   and CTAP2/HID).
 5. **`@trinoris/securedoc`** (future, unscoped) becomes a second real
    consumer of `securelib`, proving the extraction was worth doing rather
    than merely aesthetic.
