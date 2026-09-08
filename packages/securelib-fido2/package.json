@@ -1,0 +1,53 @@
+{
+  "name": "@trinoris/securelib-fido2",
+  "version": "0.1.0",
+  "description": "Real CTAP2/HID Fido2Authenticator transport for @trinoris/securelib's yubikey-fido2 KeyProvider (specs/securegit/06-key-provider-port.md) -- any FIDO2 authenticator's hmac-secret extension.",
+  "type": "module",
+  "repository": {
+    "url": "https://github.com/trinoris/secure.git",
+    "directory": "packages/securelib-fido2"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "fido2",
+    "yubikey",
+    "webauthn",
+    "ctap2",
+    "hmac-secret"
+  ],
+  "author": "TRINORIS",
+  "license": "MIT",
+  "peerDependencies": {
+    "@trinoris/securelib": "^0.1.0"
+  },
+  "devDependencies": {
+    "@trinoris/securelib": "^0.1.0",
+    "@types/node": "^26.4.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

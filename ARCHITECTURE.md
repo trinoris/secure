@@ -156,10 +156,9 @@ is a packaging change, not a behavior change.
 
 ### Provider companion packages — `@trinoris/securelib-piv`, `@trinoris/securelib-fido2`
 
-**`@trinoris/securelib-piv` exists now, built and verified against a
-real YubiKey — not just this section's original design.**
-`@trinoris/securelib-fido2` remains design-only; no FIDO2-only hardware
-has been available to build and verify it against.
+**Both exist now, built and verified against a real YubiKey — not just
+this section's original design.** The same physical key speaks both
+PIV and FIDO2.
 
 Renamed from the `securegit-piv` name used when these were first
 proposed, per this document's own core insight: a `KeyProvider`
@@ -241,8 +240,12 @@ after the fact — real, avoidable risk for no benefit.
    dependency" — this is the point `securegit`'s own `package.json` gains
    a real, external `@trinoris/securelib` dependency rather than a
    workspace link.
-4. **IN PROGRESS (PIV done, verified against real hardware). Build the provider companion packages against the
-   now-public port.** Packaging is settled and built
+4. **DONE. Build the provider companion packages against the
+   now-public port.** Both real hardware companion packages
+   (`@trinoris/securelib-piv`, `@trinoris/securelib-fido2`) are built and
+   verified against actual hardware; all three cloud `KmsBackend`s are
+   built but not yet verified against a live account — see below for
+   both. Packaging is settled and built
    (`06-key-provider-port.md`'s "Loading a provider package without
    paying for it"): `registry.ts`'s `loadProvider()` resolves
    `kms-envelope` from `BUILTIN`, and `yubikey-piv`/`yubikey-fido2` by
@@ -279,9 +282,21 @@ after the fact — real, avoidable risk for no benefit.
    match a `node:crypto` computation exactly, and a full
    `YubikeyPivProvider` wrap()/unwrap() round trip through the real card
    passed — the first genuinely hardware-verified piece of this whole
-   design, not merely fake- or structurally-tested. **What's left:**
-   `@trinoris/securelib-fido2`'s real CTAP2/HID transport — no FIDO2-only
-   hardware was available to verify it against.
+   design, not merely fake- or structurally-tested. **DONE.
+   `@trinoris/securelib-fido2` is built and hardware-verified too** —
+   the same physical YubiKey 5C NFC also speaks FIDO2.
+   `packages/securelib-fido2`'s `RealFido2Authenticator` shells out to
+   libfido2's `fido2-token`/`fido2-cred`/`fido2-assert`, zero npm
+   dependencies, same reasoning as PIV. Manually verified (each CTAP2
+   call needs a real touch a non-interactive process can't react to, so
+   this couldn't be scripted unattended the way PIV's ECDH check could):
+   the same credential+salt gave the byte-identical `hmac-secret` across
+   two different challenges, a different salt gave a different secret,
+   then a full `YubikeyFido2Provider` wrap()/unwrap() round trip through
+   the real authenticator passed. No `KeyProvider` in this design remains
+   fake-only now — both hardware providers are real-hardware-verified;
+   only the three cloud `KmsBackend`s remain unproven against a live
+   account (all three built, none tested against real credentials).
 5. **`@trinoris/securedoc`** (future, unscoped) becomes a second real
    consumer of `securelib`, proving the extraction was worth doing rather
    than merely aesthetic.

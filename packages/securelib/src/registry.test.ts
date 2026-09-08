@@ -41,29 +41,32 @@ describe('loadProvider()', () => {
     await expect(loadProvider('not-a-real-provider', undefined)).rejects.toBeInstanceOf(ProviderError);
   });
 
-  it('yubikey-fido2, with the companion package not installed, gives an actionable npm install error', async () => {
-    await expect(loadProvider('yubikey-fido2', undefined)).rejects.toThrow(
-      /npm install @trinoris\/securelib-fido2/,
-    );
-  });
-
-  it('a missing companion package rejects with ProviderError, not a raw module-resolution error', async () => {
-    await expect(loadProvider('yubikey-fido2', undefined)).rejects.toBeInstanceOf(ProviderError);
-  });
-
-  // @trinoris/securelib-piv is a real sibling workspace package in this
-  // monorepo (packages/securelib-piv) — unlike -fido2 above, `yubikey-piv`
-  // genuinely resolves here, proving loadProvider()'s dynamic-import path
-  // works end to end against a real companion package, not just the
-  // BUILTIN path passphrase-file/kms-envelope already cover. A downstream
-  // consumer that hasn't installed @trinoris/securelib-piv still gets the
-  // "not installed" error above — this environment just isn't that case.
+  // Both @trinoris/securelib-piv and @trinoris/securelib-fido2 are real
+  // sibling workspace packages in this monorepo (packages/securelib-piv,
+  // packages/securelib-fido2) — loadProvider() genuinely resolves both,
+  // proving the dynamic-import path works end to end against real
+  // companion packages, not just the BUILTIN path passphrase-file/
+  // kms-envelope already cover. What a downstream consumer sees when a
+  // companion package genuinely isn't installed is covered separately —
+  // see registry.not-installed.test.ts, which simulates that with
+  // vi.mock() since both packages are unconditionally present here.
   it('resolves yubikey-piv via the real, installed @trinoris/securelib-piv companion package', async () => {
     const provider = await loadProvider('yubikey-piv', { slot: '9d', pin: () => '123456' });
     expect(provider.id).toBe('yubikey-piv');
     expect(provider.describe()).toEqual({
       id: 'yubikey-piv',
       label: 'YubiKey / PIV smartcard',
+      custodial: false,
+      requiresHardware: true,
+    });
+  });
+
+  it('resolves yubikey-fido2 via the real, installed @trinoris/securelib-fido2 companion package', async () => {
+    const provider = await loadProvider('yubikey-fido2', {});
+    expect(provider.id).toBe('yubikey-fido2');
+    expect(provider.describe()).toEqual({
+      id: 'yubikey-fido2',
+      label: 'FIDO2 authenticator (hmac-secret)',
       custodial: false,
       requiresHardware: true,
     });

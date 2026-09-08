@@ -37,18 +37,26 @@ hand-rolling raw PC/SC APDU bytes against real, limited-retry hardware
 — see "Concrete designs" below). The card's own ECDH output was
 independently confirmed correct against a `node:crypto` computation,
 and a full `YubikeyPivProvider` wrap()/unwrap() round trip through the
-real card passed. **What's still genuinely not built:**
-`@trinoris/securelib-fido2`'s real CTAP2/HID transport — no FIDO2-only
-hardware was available to verify it against, a different situation from
-PIV now that real PIV hardware has been used. Every `KeyProvider`'s own
-logic (key derivation, AEAD wrap/unwrap, AAD binding, the
-`ctx.interactive` gate) is real and tested against a real cryptographic
-fake for FIDO2, and against real hardware for PIV — only FIDO2's
-hardware call at the very bottom is still faked, exactly the boundary
-[00](00-test-plan.md)'s "Deliberately not phased" note and each
-provider's own "Test plan" section below already drew. [00](00-test-plan.md)'s
-note no longer covers `key add-provider`/`remove-provider`/`list`
-themselves (built), only the PIV/FIDO2 hardware transports.
+real card passed. **`@trinoris/securelib-fido2` is built and verified
+against real hardware too** — the same physical YubiKey 5C NFC also
+speaks FIDO2. `packages/securelib-fido2`'s `RealFido2Authenticator`
+shells out to libfido2's `fido2-token`/`fido2-cred`/`fido2-assert` (zero
+npm dependencies, same reasoning as PIV). Manually verified (each
+CTAP2 call needs a real touch, so unlike PIV's ECDH check this couldn't
+be scripted unattended): the same credential+salt produced the
+byte-identical `hmac-secret` across two different challenges, and a
+different salt produced a different secret — then a full
+`YubikeyFido2Provider` wrap()/unwrap() round trip through the real
+authenticator passed too. Every `KeyProvider`'s own logic (key
+derivation, AEAD wrap/unwrap, AAD binding, the `ctx.interactive` gate)
+is now real and tested against real hardware for **both** PIV and
+FIDO2 — no `KeyProvider` implementation in this design remains
+fake-only. [00](00-test-plan.md)'s "Deliberately not phased" note no
+longer covers `key add-provider`/`remove-provider`/`list` themselves
+(built) or the PIV/FIDO2 hardware transports (built and hardware-
+verified) — only the three cloud `KmsBackend`s (`AwsKmsBackend`,
+`GcpKmsBackend`, `AzureKmsBackend` — all built, none run against a
+real cloud account) remain genuinely unproven, not unbuilt.
 
 `key add-provider`/`remove-provider`/`list` ([10](10-cli-contract.md)) are
 implemented as `addProvider()`/`removeProvider()` in `src/keyring.ts`.
@@ -179,7 +187,7 @@ existing code.
 | `os-keychain` | no | designed | DPAPI / macOS Keychain / libsecret. Better UX; no keychain under WSL, so it always needs a fallback. |
 | `tpm2` | no | designed | Seals the RMK to PCRs. Machine-bound: a re-imaged laptop loses it, so it is never the only path. |
 | `yubikey-piv` | no | **built and verified against real hardware** | `packages/securelib/src/piv.ts` (`YubikeyPivProvider`) plus the real `packages/securelib-piv` companion package (`RealPivCard`, shells out to `ykman`/`pkcs11-tool`, zero npm dependencies). Tested against a physical YubiKey 5C NFC (firmware 5.8.0): a full `YubikeyPivProvider` wrap()/unwrap() round trip through the real card passes, and the card's own ECDH output was independently confirmed to match a `node:crypto` computation byte for byte. The only one of the three "next providers" verified against real hardware rather than a fake or structurally — see "Concrete designs" below. |
-| `yubikey-fido2` | no | **`YubikeyFido2Provider` built, real CTAP2/HID transport not** | `packages/securelib/src/fido2.ts` — same shape, against a `FakeFido2Authenticator` (`fido2.test.ts`). See "Concrete designs" below. |
+| `yubikey-fido2` | no | **built and verified against real hardware** | `packages/securelib/src/fido2.ts` (`YubikeyFido2Provider`) plus the real `packages/securelib-fido2` companion package (`RealFido2Authenticator`, shells out to libfido2's `fido2-token`/`fido2-cred`/`fido2-assert`, zero npm dependencies). Tested against the same physical YubiKey 5C NFC (firmware 5.8.0) as `yubikey-piv`: a full `YubikeyFido2Provider` wrap()/unwrap() round trip through the real authenticator passes, and manual verification confirmed the same credential+salt gives the byte-identical `hmac-secret` across two different challenges, while a different salt gives a different secret. See "Concrete designs" below. |
 | `recovery-code` | no | built, but not a `KeyProvider` | Not interactive; used by `import-recovery` ([09](09-rotation-recovery.md)). As built, this is *not* a `KeyProvider` implementation behind this port — `src/recovery.ts` derives its wrap key directly from the code via HKDF and does its own AES-256-GCM wrap/unwrap, bypassing `provider.ts` entirely. The RMKs it recovers are then handed to an ordinary `PassphraseFileProvider` (via `keyringFromRecoveredGenerations`) to become the new local keyring's actual provider. The reason: this port's `init`/`wrap`/`unwrap` shape is built around one *persistent* secret per generation (a passphrase, a TPM binding); a recovery code instead needs to decrypt *every* generation at once under one code, which doesn't fit that per-generation shape without distortion. |
 | `kms-envelope` | **yes** | **`KmsEnvelopeProvider` + all three cloud backends built; none verified against a real cloud** | `packages/securelib/src/kms-envelope.ts` — full conformance suite passes against a `FakeKmsBackend`. `aws-kms-backend.ts` (hand-rolled SigV4), `gcp-kms-backend.ts` (service-account JWT-bearer OAuth + REST), and `azure-kms-backend.ts` (Azure AD client-credentials + REST, caller-supplied IV packed with the GCM tag into one opaque blob) each implement `KmsBackend` from `node:crypto`/`node:https` alone, no cloud SDKs. GCP's JWT signature and Azure's AES-256-GCM framing are verified with *real* cryptography in tests (a generated RSA keypair; a fake vault that actually runs AES-256-GCM) — AWS's SigV4 is checked only structurally, since a JWT/AEAD round-trip is verifiable offline but SigV4 byte-correctness isn't without a live AWS endpoint. None of the three has run against a real cloud account — no credentials exist in the environment this was built in. Each has a real-credentials-gated integration test (`describe.skipIf`), written and ready. |
 
@@ -567,9 +575,36 @@ physical keys) never produce the same secret for the same credential/
 salt, proven directly. Passes the full conformance suite
 (`describe.each`'s fourth row) plus `fido2.test.ts`'s own tests: the
 `ctx.interactive` gate throws before ever touching the authenticator.
-**Not built:** a real `@trinoris/securelib-fido2` companion package
-implementing `Fido2Authenticator` against actual CTAP2/HID hardware;
-real-hardware coverage is separate, manual, same honest CI limit as PIV.
+**The real `@trinoris/securelib-fido2` companion package is built and
+verified against real hardware** — `packages/securelib-fido2`
+(`RealFido2Authenticator`). Zero npm dependencies: shells out to
+libfido2's `fido2-token` (device discovery), `fido2-cred -M -h`
+(MakeCredential with the hmac-secret extension), and `fido2-assert -G
+-h` (GetAssertion) — the mature reference implementation of this
+protocol, chosen over hand-rolling raw CTAP2 HID framing for the same
+reason `securelib-piv` chose `pkcs11-tool` over raw PC/SC APDUs.
+Deliberately never requests user verification (no `-v`/`uv=true`) —
+touch (`up`) alone is sufficient on this authenticator (confirmed:
+"Always Require User Verification" is off), so no PIN is ever submitted
+and there is no PIN-retry risk analogous to PIV's.
+
+Verified against the same physical YubiKey 5C NFC (firmware 5.8.0),
+manually, one command at a time — unlike PIV's ECDH check, this
+couldn't be scripted end-to-end unattended, since every CTAP2
+MakeCredential/GetAssertion call needs a real physical touch a
+non-interactive process can't react to in time: MakeCredential with
+hmac-secret requested succeeded with no PIN prompt; GetAssertion with
+the same credential and salt, called twice with two *different*
+challenges, produced the byte-identical `hmac-secret` both times —
+proving the secret depends only on `(credential, salt)`, never the
+per-call challenge, exactly what `wrap()`/`unwrap()` need; a third call
+with a *different* salt produced a different secret.
+`packages/securelib-fido2/src/index.test.ts` then drove a full
+`YubikeyFido2Provider` wrap()/unwrap() round trip through the real
+authenticator via `RealFido2Authenticator`, and it passed (two touches).
+This test is `describe.skipIf`-gated on `SECUREGIT_FIDO2_HARDWARE_TEST=1`
+— never auto-detected, and only runnable interactively, since a touch
+prompt inside a non-interactive tool call can't be reacted to.
 
 ## Multiple providers per repository
 
@@ -649,7 +684,7 @@ packages/
   securelib/           @trinoris/securelib        — core, zero deps: passphrase-file AND kms-envelope live here
   securegit/            @trinoris/securegit         — CLI, depends on securelib
   securelib-piv/        @trinoris/securelib-piv     — yubikey-piv — BUILT, verified against real hardware
-  securelib-fido2/      @trinoris/securelib-fido2   — yubikey-fido2, real CTAP2/HID dependency — not yet built
+  securelib-fido2/      @trinoris/securelib-fido2   — yubikey-fido2 — BUILT, verified against real hardware
 ```
 
 Only two companion packages, not three. `kms-envelope`'s own design
@@ -797,8 +832,14 @@ packages on disk, not a mock.
 | `RealPivCard.ecdh()` wraps a runner rejection rather than surfacing it raw, and cleans up its temp directory either way | `packages/securelib-piv/src/index.fake.test.ts` | — | ✅ |
 | `YubikeyFido2Provider` passes the full conformance suite against a `FakeFido2Authenticator` | `src/provider.conformance.test.ts` | — | ✅ |
 | `YubikeyFido2Provider.unwrap` throws a specific, actionable error when `ctx.interactive` is `false` | `src/fido2.test.ts` | — | ✅ |
+| Same credential+salt gives the byte-identical `hmac-secret` across two different challenges, against a real authenticator | manual (documented in "Concrete designs" above) | — | ✅ — real YubiKey 5C NFC, verified once during development |
+| A different salt gives a different `hmac-secret`, against a real authenticator | manual (documented in "Concrete designs" above) | — | ✅ |
+| A full `YubikeyFido2Provider` wrap()/unwrap() round trip via `RealFido2Authenticator` against real hardware | `packages/securelib-fido2/src/index.test.ts` | — | ✅ — `describe.skipIf`, gated on `SECUREGIT_FIDO2_HARDWARE_TEST=1`, never run automatically, only runnable interactively (real touch needed) |
+| `securelib-fido2` declares zero npm runtime dependencies and only shells out to `fido2-token`/`fido2-cred`/`fido2-assert` | `packages/securelib-fido2/src/package.test.ts` | — | ✅ |
+| `RealFido2Authenticator`'s device discovery, argv construction, and output parsing work correctly without hardware | `packages/securelib-fido2/src/index.fake.test.ts` | — | ✅ |
 | `loadProvider('passphrase-file', ...)` resolves to a real, working provider — no dynamic `import()` needed | `src/registry.test.ts` | — | ✅ |
-| `loadProvider('yubikey-piv'/'yubikey-fido2', ...)` with the companion package absent throws a `npm install @trinoris/securelib-*` error, not a raw module-resolution error | `src/registry.test.ts` | — | ✅ |
+| `loadProvider()` with a companion package absent throws a `npm install @trinoris/securelib-*` error, not a raw module-resolution error | `src/registry.not-installed.test.ts` | — | ✅ — `@trinoris/securelib-piv` and `-fido2` are both real sibling workspace packages now, so this is simulated via `vi.mock()` rather than a genuinely-uninstalled package |
+| `loadProvider('yubikey-piv'\|'yubikey-fido2', ...)` resolves via the real, installed companion packages | `src/registry.test.ts` | — | ✅ |
 | `loadProvider()` with an unknown id rejects with `ProviderError`, distinctly from a missing companion package | `src/registry.test.ts` | — | ✅ |
 | Neither `securelib` nor `securegit` lists a companion package as a dependency (T11, `package.test.ts`'s existing exact-dependency-list check already enforces this — no dedicated test needed) | `src/package.test.ts` | — | ✅ |
 | `loadProvider('kms-envelope', ...)` resolves via `registry.ts`'s `BUILTIN` map, not a dynamic `import()` | `src/registry.test.ts` | — | ✅ |
