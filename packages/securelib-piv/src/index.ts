@@ -28,7 +28,21 @@ import { createPublicKey } from 'node:crypto';
 import { YubikeyPivProvider, type PivCard } from '@trinoris/securelib/piv';
 import type { KeyProvider } from '@trinoris/securelib/provider';
 
+/**
+ * The subprocess boundary, injected rather than called directly — the
+ * same reasoning `PivCard` itself is injected into `YubikeyPivProvider`
+ * (piv.ts): lets tests exercise `RealPivCard`'s own logic (slot mapping,
+ * SPKI encoding, temp-file lifecycle, error wrapping) against a fake
+ * `ykman`/`pkcs11-tool`, without a physical key attached — real hardware
+ * remains the thing `index.test.ts`'s `describe.skipIf` suite verifies
+ * separately, not something every other test needs to touch too. Resolves
+ * with stdout on a zero exit; rejects (matching `execFile`'s own real
+ * behaviour) on a nonzero one.
+ */
+export type Runner = (command: string, args: string[]) => Promise<{ stdout: string }>;
+
 const execFile = promisify(execFileCb);
+const defaultRunner: Runner = (command, args) => execFile(command, args);
 
 /**
  * OpenSC's own PIV driver convention, not this package's invention — the
@@ -47,15 +61,19 @@ const OPENSC_SLOT_ID: Record<string, string> = {
 export interface RealPivCardOptions {
   /** Path to OpenSC's PKCS#11 module. Debian/Ubuntu default shown; override for other distros. */
   pkcs11Module?: string;
+  /** Defaults to a real `execFile`-backed runner; override in tests. */
+  runner?: Runner;
 }
 
 const DEFAULT_MODULE = '/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so';
 
 export class RealPivCard implements PivCard {
   private readonly module: string;
+  private readonly runner: Runner;
 
   constructor(options: RealPivCardOptions = {}) {
     this.module = options.pkcs11Module ?? DEFAULT_MODULE;
+    this.runner = options.runner ?? defaultRunner;
   }
 
   /**
@@ -64,7 +82,7 @@ export class RealPivCard implements PivCard {
    * slot, unlike the PKCS#11 route `ecdh()` below has to take.
    */
   async getPublicKey(slot: string): Promise<Buffer> {
-    const { stdout } = await execFile('ykman', ['piv', 'keys', 'export', slot, '-']);
+    const { stdout } = await this.runner('ykman', ['piv', 'keys', 'export', slot, '-']);
     const keyObject = createPublicKey(stdout);
     const spkiDer = keyObject.export({ type: 'spki', format: 'der' });
     // The raw uncompressed EC point is the DER's final 65 bytes (0x04 ‖ X ‖ Y) —
@@ -100,7 +118,7 @@ export class RealPivCard implements PivCard {
       await writeFile(peerSpkiPath, encodeSpki(peerPublicKey));
 
       try {
-        await execFile('pkcs11-tool', [
+        await this.runner('pkcs11-tool', [
           '--module', this.module,
           '--derive',
           '--id', openscId,

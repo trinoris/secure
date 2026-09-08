@@ -78,15 +78,26 @@ describe('src/ import hygiene (T11)', () => {
   });
 
   it('never shells out to anything but ykman/pkcs11-tool — no arbitrary command execution', async () => {
+    // Matches both a direct execFile('cmd', ...) call and this.runner('cmd',
+    // ...) — the subprocess boundary is injected (RealPivCard's `Runner`,
+    // for hardware-free error-path testing), so the literal command names
+    // this check exists to catch now appear at the runner call sites, not
+    // inside defaultRunner's own generic `execFile(command, args)` (a
+    // variable, deliberately not a literal — checking that string would
+    // find nothing and silently stop proving anything, exactly the trap
+    // this comment exists to name).
     const files = await listProductionSourceFiles(join(REPO_ROOT, 'src'));
     const allowedCommands = new Set(['ykman', 'pkcs11-tool']);
     const offenders: string[] = [];
+    let matchCount = 0;
     for (const file of files) {
       const content = await readFile(file, 'utf8');
-      for (const match of content.matchAll(/execFile\(\s*'([^']+)'/g)) {
+      for (const match of content.matchAll(/(?:execFile|this\.runner)\(\s*'([^']+)'/g)) {
+        matchCount++;
         if (!allowedCommands.has(match[1]!)) offenders.push(`${file}: ${match[1]}`);
       }
     }
+    expect(matchCount).toBeGreaterThan(0); // sanity: the scan actually found the runner call sites
     expect(offenders).toEqual([]);
   });
 });

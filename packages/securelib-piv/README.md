@@ -38,6 +38,38 @@ const card = new RealPivCard(); // optionally { pkcs11Module: '/path/to/opensc-p
 const provider = new YubikeyPivProvider(card, '9d', () => pin);
 ```
 
+Or via `@trinoris/securelib`'s registry, which resolves this package
+lazily — nothing here loads unless a repository's keyring actually names
+`yubikey-piv`:
+
+```ts
+import { loadProvider } from '@trinoris/securelib/registry';
+
+const provider = await loadProvider('yubikey-piv', { slot: '9d', pin: () => pin });
+```
+
+## Testing without hardware
+
+`RealPivCard`'s subprocess boundary is injected (`RealPivCardOptions.runner`,
+defaulting to a real `execFile`-backed one) — the same reasoning `PivCard`
+itself is injected into `YubikeyPivProvider`. This lets `src/index.fake.test.ts`
+exercise slot mapping, argv construction, error wrapping, and temp-file
+cleanup against a fake `ykman`/`pkcs11-tool`, without a physical key
+attached or spending a real PIN try. A fake success path can't prove
+anything cryptographically meaningful, though — that's what the real
+hardware suite below is for.
+
+**Honest limit, not solved here:** `ecdh()` passes the PIN to
+`pkcs11-tool` as a CLI argument, briefly visible to other local users on
+the same machine via `ps` for the life of that one subprocess — the same
+exposure `ykman`'s own CLI already has. OpenSC's own `getpass()` refuses
+piped/non-TTY stdin outright (confirmed empirically), so there's no
+free fix through the tool itself; a real fix would need a pseudo-terminal
+library (reintroducing an npm dependency this package exists to avoid)
+or a full hand-rolled PC/SC implementation (the APDU-risk tradeoff this
+package's header comment already explains choosing against). Judged not
+worth it for a sub-second, single-user-workstation-scoped exposure.
+
 ## Verified against real hardware
 
 Built and tested against a physical YubiKey 5C NFC (firmware 5.8.0), not

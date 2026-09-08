@@ -496,6 +496,32 @@ project's invention — empirically confirmed for `9d` specifically
 against the real card (`pkcs11-tool --list-objects --type privkey`
 reported `ID: 03` for a key generated in slot `9d`).
 
+`RealPivCard`'s subprocess boundary is injected (`RealPivCardOptions.runner`,
+defaulting to a real `execFile`-backed one) — same reasoning `PivCard`
+itself is injected into `YubikeyPivProvider`. Lets `index.fake.test.ts`
+exercise slot mapping, argv construction, error wrapping, and temp-file
+cleanup against a fake `ykman`/`pkcs11-tool`, without spending a real PIN
+try per test run — real hardware (`index.test.ts`) remains the only
+thing that proves the actual cryptography, since a fake success path
+here can't prove anything cryptographically meaningful.
+
+**Investigated and rejected: hiding the PIN from `ps`.** `ecdh()` passes
+`pin` as a `pkcs11-tool` CLI argument, briefly visible to other local
+users on the same machine via `ps`/`/proc/<pid>/cmdline` for that one
+subprocess's lifetime. Tested piping the PIN via stdin instead of
+`--pin`: OpenSC's own `getpass()` refuses non-TTY stdin outright
+(`error: util_getpass error`), so there's no free fix through the tool
+itself. The two real fixes — a pseudo-terminal library to satisfy
+`getpass()` (reintroduces an npm dependency this package exists to
+avoid), or a full hand-rolled PC/SC implementation covering both VERIFY
+PIN and GENERAL AUTHENTICATE in one held connection (PIN-verified state
+lives on the card *connection*, so a partial fix — hand-roll just VERIFY
+PIN, still shell out to `pkcs11-tool` for the derive — doesn't work
+across separate processes; this is why the alternative here is "fully
+hand-rolled," not a smaller step) — cost more than the exposure they'd
+close: a sub-second window, single-local-user-workstation-scoped, the
+same limitation `ykman`'s own CLI already has. Judged not worth it.
+
 ### `yubikey-fido2` — any FIDO2 authenticator, via `hmac-secret`
 
 **A different mechanism from PIV, for hardware that only speaks FIDO2**
@@ -766,6 +792,9 @@ packages on disk, not a mock.
 | `RealPivCard.ecdh()`'s output matches an independent `node:crypto` ECDH computation, against a real card | manual (documented in "Concrete designs" above) | — | ✅ — real YubiKey 5C NFC, verified once during development |
 | A full `YubikeyPivProvider` wrap()/unwrap() round trip via `RealPivCard` against real hardware | `packages/securelib-piv/src/index.test.ts` | — | ✅ — `describe.skipIf`, gated on `SECUREGIT_PIV_TEST_PIN`, never run automatically |
 | `securelib-piv` declares zero npm runtime dependencies and only shells out to `ykman`/`pkcs11-tool` | `packages/securelib-piv/src/package.test.ts` | — | ✅ |
+| `RealPivCard.getPublicKey()`/`ecdh()` build the expected argv and parse a fake `ykman`/`pkcs11-tool`'s output correctly, without hardware | `packages/securelib-piv/src/index.fake.test.ts` | — | ✅ |
+| `RealPivCard.ecdh()` rejects an unknown slot before ever invoking the runner | `packages/securelib-piv/src/index.fake.test.ts` | — | ✅ |
+| `RealPivCard.ecdh()` wraps a runner rejection rather than surfacing it raw, and cleans up its temp directory either way | `packages/securelib-piv/src/index.fake.test.ts` | — | ✅ |
 | `YubikeyFido2Provider` passes the full conformance suite against a `FakeFido2Authenticator` | `src/provider.conformance.test.ts` | — | ✅ |
 | `YubikeyFido2Provider.unwrap` throws a specific, actionable error when `ctx.interactive` is `false` | `src/fido2.test.ts` | — | ✅ |
 | `loadProvider('passphrase-file', ...)` resolves to a real, working provider — no dynamic `import()` needed | `src/registry.test.ts` | — | ✅ |
