@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "repository": {
-    "url": "https://github.com/trinoris/securegit.git",
+    "url": "https://github.com/trinoris/secure.git",
     "directory": "packages/securegit"
   },
   "bin": {

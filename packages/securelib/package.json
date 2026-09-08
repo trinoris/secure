@@ -4,7 +4,7 @@
   "description": "Transport-agnostic envelope encryption core: envelope format, key hierarchy, pluggable KeyProvider port, multi-recipient sharing, and offline recovery. Extracted from @trinoris/securegit.",
   "type": "module",
   "repository": {
-    "url": "https://github.com/trinoris/securegit.git",
+    "url": "https://github.com/trinoris/secure.git",
     "directory": "packages/securelib"
   },
   "publishConfig": {

@@ -76,7 +76,7 @@ refused directly on `master` itself, 0 violations. Try it:
 Not a projection — this is what happened, repeatedly, on real GitHub
 Actions infrastructure. The full six-mode matrix was confirmed together
 in one run
-([34022273040](https://github.com/trinoris/securegit/actions/runs/34022273040)):
+([34022273040](https://github.com/trinoris/secure/actions/runs/34022273040)):
 
 - **W3 (pr-gated) holds clean in both signing tiers.** `basic`: 0
   violations — branch isolation and content review already do the whole
@@ -114,7 +114,7 @@ genuinely registered, genuinely signing collaborator, hijacked into a
 prompt-injection-shaped attack on a fraction of its rounds
 ([specs/chaotests/04-agent-threat-model.md](specs/chaotests/04-agent-threat-model.md)).
 Confirmed locally, then on real GitHub Actions infrastructure
-([run 34041479353](https://github.com/trinoris/securegit/actions/runs/34041479353)),
+([run 34041479353](https://github.com/trinoris/secure/actions/runs/34041479353)),
 where the longer run surfaced a real mechanism the shorter local runs
 missed:
 
@@ -146,7 +146,7 @@ missed:
 
 ## Watch it live
 
-[![Chaos Match Viewer](https://img.shields.io/badge/chaos%20sandbox-live%20replay-3ecf8e)](https://trinoris.github.io/securegit/)
+[![Chaos Match Viewer](https://img.shields.io/badge/chaos%20sandbox-live%20replay-3ecf8e)](https://trinoris.github.io/secure/)
 
 `.github/workflows/build-ci.yml`'s `chaos` job runs all six modes (three
 workflows × two signing tiers) as a real, several-minute campaign every

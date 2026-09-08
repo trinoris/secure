@@ -1,11 +1,11 @@
 # `@trinoris/securegit`
 
-[![Build CI](https://github.com/trinoris/securegit/actions/workflows/build-ci.yml/badge.svg)](https://github.com/trinoris/securegit/actions/workflows/build-ci.yml)
-[![CodeQL](https://github.com/trinoris/securegit/actions/workflows/codeql.yml/badge.svg)](https://github.com/trinoris/securegit/actions/workflows/codeql.yml)
-[![Secret Scan](https://github.com/trinoris/securegit/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/trinoris/securegit/actions/workflows/gitleaks.yml)
-[![Release](https://github.com/trinoris/securegit/actions/workflows/release.yml/badge.svg)](https://github.com/trinoris/securegit/actions/workflows/release.yml)
+[![Build CI](https://github.com/trinoris/secure/actions/workflows/build-ci.yml/badge.svg)](https://github.com/trinoris/secure/actions/workflows/build-ci.yml)
+[![CodeQL](https://github.com/trinoris/secure/actions/workflows/codeql.yml/badge.svg)](https://github.com/trinoris/secure/actions/workflows/codeql.yml)
+[![Secret Scan](https://github.com/trinoris/secure/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/trinoris/secure/actions/workflows/gitleaks.yml)
+[![Release](https://github.com/trinoris/secure/actions/workflows/release.yml/badge.svg)](https://github.com/trinoris/secure/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Chaos Match Viewer](https://img.shields.io/badge/chaos%20sandbox-live%20replay-3ecf8e)](https://trinoris.github.io/securegit/)
+[![Chaos Match Viewer](https://img.shields.io/badge/chaos%20sandbox-live%20replay-3ecf8e)](https://trinoris.github.io/secure/)
 
 Client-side Git encryption: a transparent `clean`/`smudge` filter that
 encrypts selected files on your own workstation, so the repository — every
@@ -105,7 +105,7 @@ Not yet published to a package registry (no tagged release exists yet —
 see `.github/workflows/release.yml`). For now, build from source:
 
 ```sh
-git clone git@github.com:trinoris/securegit.git
+git clone git@github.com:trinoris/secure.git
 cd securegit
 npm ci
 npm run build
@@ -166,7 +166,7 @@ npm run chaos:sandbox
 See [chaos/README.md](chaos/README.md) for prerequisites and exact
 commands. A nightly run of all six modes is published as a GitHub Pages
 site (`.github/workflows/build-ci.yml`'s `chaos` job) — the latest
-comparison is viewable at `https://trinoris.github.io/securegit/`.
+comparison is viewable at `https://trinoris.github.io/secure/`.
 
 ## Development
 

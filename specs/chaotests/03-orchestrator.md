@@ -172,7 +172,7 @@ run, not by inspection:**
 **Confirmed by a real chaos run, watched live, not inferred** — first a
 local Docker run, then, since renamed to `SANDBOX_SIGNING` and crossed
 with all three workflows, on real GitHub Actions infrastructure too
-([run 34022273040](https://github.com/trinoris/securegit/actions/runs/34022273040)).
+([run 34022273040](https://github.com/trinoris/secure/actions/runs/34022273040)).
 A genuine `attackT1_attributeDowngrade` attempt was directly observed
 being refused — `remote: refusing push to refs/heads/working — commit
 b32f2ed0 is not signed` (local run) — and the full run finished with
@@ -280,7 +280,7 @@ never run against before:
 
 **Confirmed twice: real local chaos runs first (one per new combination),
 then all six modes together on real GitHub Actions infrastructure**
-([run 34022273040](https://github.com/trinoris/securegit/actions/runs/34022273040),
+([run 34022273040](https://github.com/trinoris/secure/actions/runs/34022273040),
 `workflow_dispatch`), matching exactly: `direct-master`+`basic` violates
 (12 violations, 3 hostile recipients — locally: same shape, smaller
 counts); `working-branch`+`basic` violates (157 violations — locally 57,
@@ -680,7 +680,7 @@ Restated from [01](01-sandbox.md)'s own guardrails, extended for this spec:
 | Commit signing: a legitimate collaborator's properly-signed commit is unaffected, accepted as before | `chaos/actors/driver.mjs`'s `allCommitsSignedByRecipient()` | ✅ built, confirmed by the same local plumbing test, and indirectly by every real run's own successful merges (collaborator-a/b's `commit.gpgsign=true` commits are signed and land normally) |
 | W3: chaos-5 pushing straight to `master` is refused by the `pre-receive` hook, never reaches the orchestrator | `remote/entrypoint.mjs`'s hook + `attacker.mjs`'s `attackDirectMasterBypass` | ✅ (local repro + real runs: every `direct-master-bypass` attempt logged `rejected: true`) |
 | W3: the merge-review step evaluates against `master`'s pre-merge state, not the branch's own edited `.gitattributes` (the same-push downgrade-plus-plaintext attack) | `chaos/actors/driver.mjs`'s `reviewAndMaybeMerge()` (always `checkout -B review origin/BRANCH` fresh) | ✅ (local repro) |
-| W2: `working` accumulates chaos-5's attacks like W1 — confirmed, and worse than originally predicted: a shared branch is *not* a quarantined staging area, since anyone with ordinary read access to the remote can already see it (see the corrected mechanism above) | full sandbox runs, `SANDBOX_WORKFLOW=working-branch` | Was ✅ real *GitHub Actions* runs, every one, before commit signing; promotion-to-`master` review itself also confirmed working (rejects resumed correctly once a hostile recipient landed on `working`). **Since the signing hook: closed under `SANDBOX_SIGNING=advance`, confirmed on real GitHub Actions infrastructure** ([run 34022273040](https://github.com/trinoris/securegit/actions/runs/34022273040), 0 violations) — `basic` still reproduces it (157 violations, same run), matching this document's own earlier finding almost exactly. See this document's own "Since then" note. |
+| W2: `working` accumulates chaos-5's attacks like W1 — confirmed, and worse than originally predicted: a shared branch is *not* a quarantined staging area, since anyone with ordinary read access to the remote can already see it (see the corrected mechanism above) | full sandbox runs, `SANDBOX_WORKFLOW=working-branch` | Was ✅ real *GitHub Actions* runs, every one, before commit signing; promotion-to-`master` review itself also confirmed working (rejects resumed correctly once a hostile recipient landed on `working`). **Since the signing hook: closed under `SANDBOX_SIGNING=advance`, confirmed on real GitHub Actions infrastructure** ([run 34022273040](https://github.com/trinoris/secure/actions/runs/34022273040), 0 violations) — `basic` still reproduces it (157 violations, same run), matching this document's own earlier finding almost exactly. See this document's own "Since then" note. |
 | A full real run under each of the three `SANDBOX_WORKFLOW` modes, verifier results compared against the "Predicted plaintext-leak shape" table above | GitHub Actions `chaos` job (matrix), `chaos-publish` job, `chaos/viewer/index.html`'s comparison panel | ✅ four real runs, three real bugs found and fixed along the way |
 
 ## Open Questions before implementation starts

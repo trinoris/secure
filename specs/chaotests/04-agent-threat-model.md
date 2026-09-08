@@ -92,7 +92,7 @@ project today.
 **Confirmed on two real local Docker runs** (`direct-master`+`advance`
 vs. `pr-gated`+`advance`, both `CHAOS_DURATION_SECONDS=90`), then again on
 real GitHub Actions infrastructure at the full six-mode matrix's normal
-duration ([run 34041479353](https://github.com/trinoris/securegit/actions/runs/34041479353),
+duration ([run 34041479353](https://github.com/trinoris/secure/actions/runs/34041479353),
 `CHAOS_DURATION_SECONDS=180`) — the longer CI runs surfaced a real
 mechanism the shorter local runs were too brief to hit:
 
