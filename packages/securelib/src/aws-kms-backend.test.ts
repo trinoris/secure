@@ -1,5 +1,14 @@
-import { describe, it, expect } from 'vitest';
-import { signKmsRequest, AwsKmsBackend, type HttpTransport } from './aws-kms-backend.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  signKmsRequest,
+  AwsKmsBackend,
+  resolveAwsCredentials,
+  resolveAwsRegion,
+  type HttpTransport,
+} from './aws-kms-backend.js';
 
 const CREDENTIALS = { accessKeyId: 'AKIAIOSFODNN7EXAMPLE', secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY' };
 const NOW = new Date('2026-08-30T12:36:00.000Z');
@@ -145,6 +154,124 @@ describe('AwsKmsBackend', () => {
     await expect(backend.encrypt(Buffer.from('a'.repeat(32)), 'key-1', {})).rejects.toThrow(
       /403.*AccessDeniedException/s,
     );
+  });
+});
+
+const AWS_ENV_KEYS = [
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'AWS_PROFILE',
+  'AWS_SHARED_CREDENTIALS_FILE',
+  'AWS_CONFIG_FILE',
+  'AWS_REGION',
+  'AWS_DEFAULT_REGION',
+] as const;
+
+describe('resolveAwsCredentials() / resolveAwsRegion()', () => {
+  let savedEnv: Record<string, string | undefined>;
+  let workDir: string;
+
+  beforeEach(async () => {
+    savedEnv = Object.fromEntries(AWS_ENV_KEYS.map((k) => [k, process.env[k]]));
+    for (const k of AWS_ENV_KEYS) delete process.env[k];
+    workDir = await mkdtemp(join(tmpdir(), 'aws-kms-cred-test-'));
+  });
+
+  afterEach(async () => {
+    for (const k of AWS_ENV_KEYS) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  it('prefers explicit env vars over any profile file, and never even reads one when they\'re set', async () => {
+    process.env.AWS_ACCESS_KEY_ID = 'AKIAENVEXAMPLE';
+    process.env.AWS_SECRET_ACCESS_KEY = 'env-secret';
+    process.env.AWS_SESSION_TOKEN = 'env-session-token';
+    // Points at a file that doesn't exist — proves env vars short-circuit
+    // before any file read is even attempted.
+    process.env.AWS_SHARED_CREDENTIALS_FILE = join(workDir, 'does-not-exist');
+
+    const creds = await resolveAwsCredentials();
+    expect(creds).toEqual({
+      accessKeyId: 'AKIAENVEXAMPLE',
+      secretAccessKey: 'env-secret',
+      sessionToken: 'env-session-token',
+    });
+  });
+
+  it('falls back to the [default] profile in the credentials file when no env vars are set', async () => {
+    const credsPath = join(workDir, 'credentials');
+    await writeFile(
+      credsPath,
+      '[default]\naws_access_key_id = AKIADEFAULT\naws_secret_access_key = default-secret\n',
+    );
+    process.env.AWS_SHARED_CREDENTIALS_FILE = credsPath;
+
+    const creds = await resolveAwsCredentials();
+    expect(creds).toEqual({ accessKeyId: 'AKIADEFAULT', secretAccessKey: 'default-secret' });
+  });
+
+  it('AWS_PROFILE selects a named section instead of [default]', async () => {
+    const credsPath = join(workDir, 'credentials');
+    await writeFile(
+      credsPath,
+      '[default]\naws_access_key_id = AKIADEFAULT\naws_secret_access_key = default-secret\n\n' +
+        '[work]\naws_access_key_id = AKIAWORK\naws_secret_access_key = work-secret\naws_session_token = work-token\n',
+    );
+    process.env.AWS_SHARED_CREDENTIALS_FILE = credsPath;
+    process.env.AWS_PROFILE = 'work';
+
+    const creds = await resolveAwsCredentials();
+    expect(creds).toEqual({ accessKeyId: 'AKIAWORK', secretAccessKey: 'work-secret', sessionToken: 'work-token' });
+  });
+
+  it('throws an actionable error when neither env vars nor a usable profile section exist', async () => {
+    process.env.AWS_SHARED_CREDENTIALS_FILE = join(workDir, 'does-not-exist');
+    await expect(resolveAwsCredentials()).rejects.toThrow(/could not resolve AWS credentials/);
+  });
+
+  it('resolveAwsRegion(): AWS_REGION wins over AWS_DEFAULT_REGION and the config file', async () => {
+    process.env.AWS_REGION = 'eu-west-1';
+    process.env.AWS_DEFAULT_REGION = 'us-east-1';
+    expect(await resolveAwsRegion()).toBe('eu-west-1');
+  });
+
+  it('resolveAwsRegion(): falls back to [default] in the config file', async () => {
+    const configPath = join(workDir, 'config');
+    await writeFile(configPath, '[default]\nregion = ap-southeast-2\n');
+    process.env.AWS_CONFIG_FILE = configPath;
+    expect(await resolveAwsRegion()).toBe('ap-southeast-2');
+  });
+
+  it('resolveAwsRegion(): a named profile is looked up as [profile <name>], not [<name>] — the real ~/.aws/config asymmetry', async () => {
+    const configPath = join(workDir, 'config');
+    await writeFile(configPath, '[default]\nregion = us-east-1\n\n[profile work]\nregion = eu-central-1\n');
+    process.env.AWS_CONFIG_FILE = configPath;
+    process.env.AWS_PROFILE = 'work';
+    expect(await resolveAwsRegion()).toBe('eu-central-1');
+  });
+
+  it('resolveAwsRegion(): returns undefined, never a hardcoded default, when nothing resolves', async () => {
+    process.env.AWS_CONFIG_FILE = join(workDir, 'does-not-exist');
+    expect(await resolveAwsRegion()).toBeUndefined();
+  });
+
+  it('AwsKmsBackend.fromEnvironment() resolves both credentials and region and builds a working backend', async () => {
+    process.env.AWS_ACCESS_KEY_ID = 'AKIAENVEXAMPLE';
+    process.env.AWS_SECRET_ACCESS_KEY = 'env-secret';
+    process.env.AWS_REGION = 'eu-west-1';
+    const backend = await AwsKmsBackend.fromEnvironment();
+    expect(backend).toBeInstanceOf(AwsKmsBackend);
+  });
+
+  it('AwsKmsBackend.fromEnvironment() throws an actionable error when region cannot be resolved', async () => {
+    process.env.AWS_ACCESS_KEY_ID = 'AKIAENVEXAMPLE';
+    process.env.AWS_SECRET_ACCESS_KEY = 'env-secret';
+    process.env.AWS_CONFIG_FILE = join(workDir, 'does-not-exist');
+    await expect(AwsKmsBackend.fromEnvironment()).rejects.toThrow(/could not resolve an AWS region/);
   });
 });
 

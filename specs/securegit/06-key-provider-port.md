@@ -359,6 +359,26 @@ integration test the design called for (`aws-kms-backend.test.ts`,
 committed) is written and ready to run — run it against a real KMS key
 before relying on this in production.
 
+**Credential/region resolution matches the AWS CLI's own precedence,
+also built** (`resolveAwsCredentials()`/`resolveAwsRegion()`, plus
+`AwsKmsBackend.fromEnvironment()`): explicit `AWS_ACCESS_KEY_ID`/
+`AWS_SECRET_ACCESS_KEY`/`AWS_SESSION_TOKEN` env vars first, then
+`AWS_PROFILE` (default `default`) looked up in `~/.aws/credentials`;
+region resolves from `AWS_REGION`, then `AWS_DEFAULT_REGION`, then the
+matching profile in `~/.aws/config` — which AWS names `[default]` for
+the default profile but `[profile <name>]` for every other one, a real
+asymmetry between the two files this implementation gets right.
+Deliberately does *not* implement the SDK's full provider chain (SSO,
+EC2 instance-role/IMDS credentials, container credentials) — those need
+real network calls or a token-cache lifecycle, out of scope for "read
+what's already on disk or in the environment" and much less relevant to
+a CLI/desktop key-provider than a server workload. Both file paths are
+overridable (`AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`), which is
+also what makes them fully testable without ever touching a real
+`~/.aws/*` file. `resolveAwsRegion()` returns `undefined`, never a
+hardcoded fallback, when nothing resolves — a silent default region
+could route a request at the wrong regional endpoint entirely.
+
 **`GcpKmsBackend` is built** (`gcp-kms-backend.ts`): a service-account
 JWT (RS256) exchanged for an OAuth access token
 (`urn:ietf:params:oauth:grant-type:jwt-bearer`), then Cloud KMS's
@@ -813,6 +833,12 @@ packages on disk, not a mock.
 | `AwsKmsBackend`'s `Authorization` header matches AWS's documented SigV4 format; deterministic; sensitive to body/secret-key/timestamp | `src/aws-kms-backend.test.ts` | — | ✅ (structural — not verified against a real AWS-computed signature, see "Concrete designs" above) |
 | `AwsKmsBackend.encrypt`/`decrypt` send the correct JSON action/body and decode the response | `src/aws-kms-backend.test.ts` | — | ✅ |
 | `AwsKmsBackend` wraps and unwraps a real key via a real AWS KMS key | `src/aws-kms-backend.test.ts` | — | written, `describe.skipIf` — skipped: no real AWS credentials in this environment |
+| `resolveAwsCredentials()` prefers env vars over any profile file, and never reads one when they're set | `src/aws-kms-backend.test.ts` | — | ✅ |
+| `resolveAwsCredentials()` falls back to `[default]`, or a named `AWS_PROFILE` section, in `~/.aws/credentials` | `src/aws-kms-backend.test.ts` | — | ✅ |
+| `resolveAwsCredentials()` throws an actionable error when neither env vars nor a usable profile section exist | `src/aws-kms-backend.test.ts` | — | ✅ |
+| `resolveAwsRegion()` precedence (`AWS_REGION` > `AWS_DEFAULT_REGION` > `~/.aws/config`) and the `[default]`/`[profile <name>]` naming asymmetry | `src/aws-kms-backend.test.ts` | — | ✅ |
+| `resolveAwsRegion()` returns `undefined`, never a hardcoded default, when nothing resolves | `src/aws-kms-backend.test.ts` | — | ✅ |
+| `AwsKmsBackend.fromEnvironment()` resolves both credentials and region, and gives an actionable error when region can't resolve | `src/aws-kms-backend.test.ts` | — | ✅ |
 | `signServiceAccountJwt()`'s signature genuinely verifies against the service account's real public key (and not against a different key's) | `src/gcp-kms-backend.test.ts` | — | ✅ — real RSA sign/verify via `node:crypto`, not structural |
 | `GcpKmsBackend.encrypt`/`decrypt` exchange the JWT for a token, then call Cloud KMS with a Bearer header and sorted-key AAD | `src/gcp-kms-backend.test.ts` | — | ✅ |
 | `GcpKmsBackend` wraps and unwraps a real key via a real Cloud KMS key | `src/gcp-kms-backend.test.ts` | — | written, `describe.skipIf` — skipped: no real GCP credentials in this environment |

@@ -19,6 +19,9 @@
 
 import { createHash, createHmac } from 'node:crypto';
 import { request as httpsRequest } from 'node:https';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { KmsBackend } from './kms-envelope.js';
 
 export interface AwsCredentials {
@@ -142,11 +145,121 @@ const realTransport: HttpTransport = (opts) =>
     req.end();
   });
 
+/**
+ * A minimal INI-format reader — just enough for `~/.aws/credentials` and
+ * `~/.aws/config`'s `[section]` / `key = value` shape. Not a general INI
+ * parser (no multi-line values, no nested sections); AWS's own files never
+ * need more than that.
+ */
+async function readIniSection(filePath: string, sectionName: string): Promise<Record<string, string> | null> {
+  let content: string;
+  try {
+    content = await readFile(filePath, 'utf8');
+  } catch {
+    return null;
+  }
+  let inSection = false;
+  const result: Record<string, string> = {};
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    const sectionMatch = /^\[(.+)\]$/.exec(line);
+    if (sectionMatch) {
+      inSection = sectionMatch[1]!.trim() === sectionName;
+      continue;
+    }
+    if (!inSection) continue;
+    const eq = line.indexOf('=');
+    if (eq === -1) continue;
+    result[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+/**
+ * AWS's own standard credential precedence, re-implemented directly
+ * (`node:fs` + `node:os`, no SDK): explicit env vars first, then
+ * `AWS_PROFILE` (default `"default"`) looked up in `~/.aws/credentials`.
+ * Deliberately does not implement the SDK's full provider chain (SSO, EC2
+ * instance-role/IMDS credentials, container credentials) — those need
+ * real network calls or a token-cache lifecycle, a different scope from
+ * "read what's already on disk or in the environment", and much less
+ * relevant to a CLI/desktop key-provider than to a server workload.
+ */
+export async function resolveAwsCredentials(): Promise<AwsCredentials> {
+  const envAccessKeyId = process.env.AWS_ACCESS_KEY_ID;
+  const envSecretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+  if (envAccessKeyId && envSecretAccessKey) {
+    return {
+      accessKeyId: envAccessKeyId,
+      secretAccessKey: envSecretAccessKey,
+      ...(process.env.AWS_SESSION_TOKEN ? { sessionToken: process.env.AWS_SESSION_TOKEN } : {}),
+    };
+  }
+
+  const profile = process.env.AWS_PROFILE ?? 'default';
+  const credentialsPath = process.env.AWS_SHARED_CREDENTIALS_FILE ?? join(homedir(), '.aws', 'credentials');
+  const section = await readIniSection(credentialsPath, profile);
+  if (!section?.aws_access_key_id || !section.aws_secret_access_key) {
+    throw new Error(
+      `securelib: could not resolve AWS credentials — no AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY ` +
+        `environment variables, and no usable [${profile}] section in ${credentialsPath}\n` +
+        `  action: set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, or add a [${profile}] section with ` +
+        `aws_access_key_id/aws_secret_access_key to ${credentialsPath}`,
+    );
+  }
+  return {
+    accessKeyId: section.aws_access_key_id,
+    secretAccessKey: section.aws_secret_access_key,
+    ...(section.aws_session_token ? { sessionToken: section.aws_session_token } : {}),
+  };
+}
+
+/**
+ * Same precedence as `resolveAwsCredentials()`, for region:
+ * `AWS_REGION`, then `AWS_DEFAULT_REGION`, then `~/.aws/config`'s profile
+ * section — which AWS names `[default]` for the default profile but
+ * `[profile <name>]` for every other one, a real, easy-to-miss asymmetry
+ * between `~/.aws/config` and `~/.aws/credentials` (which never prefixes
+ * `default`). Returns `undefined`, never a hardcoded fallback like
+ * `"us-east-1"`, when nothing resolves — a silent default region could
+ * route a request at the wrong regional endpoint entirely.
+ */
+export async function resolveAwsRegion(): Promise<string | undefined> {
+  if (process.env.AWS_REGION) return process.env.AWS_REGION;
+  if (process.env.AWS_DEFAULT_REGION) return process.env.AWS_DEFAULT_REGION;
+
+  const profile = process.env.AWS_PROFILE ?? 'default';
+  const configPath = process.env.AWS_CONFIG_FILE ?? join(homedir(), '.aws', 'config');
+  const sectionName = profile === 'default' ? 'default' : `profile ${profile}`;
+  const section = await readIniSection(configPath, sectionName);
+  return section?.region;
+}
+
 export class AwsKmsBackend implements KmsBackend {
   private readonly transport: HttpTransport;
 
   constructor(private readonly options: AwsKmsBackendOptions) {
     this.transport = options.transport ?? realTransport;
+  }
+
+  /**
+   * Convenience over `resolveAwsCredentials()`/`resolveAwsRegion()` for the
+   * common case: build a backend from whatever's already in the
+   * environment or `~/.aws/*`, the same way the AWS CLI itself would.
+   * `region`, if given, wins over whatever `resolveAwsRegion()` would
+   * find — `resolveAwsRegion()` only runs when `region` is omitted.
+   */
+  static async fromEnvironment(options: { region?: string; transport?: HttpTransport } = {}): Promise<AwsKmsBackend> {
+    const credentials = await resolveAwsCredentials();
+    const region = options.region ?? (await resolveAwsRegion());
+    if (!region) {
+      throw new Error(
+        'securelib: could not resolve an AWS region — set AWS_REGION/AWS_DEFAULT_REGION, ' +
+          'add a region to ~/.aws/config, or pass { region } explicitly',
+      );
+    }
+    return new AwsKmsBackend({ region, credentials, ...(options.transport ? { transport: options.transport } : {}) });
   }
 
   async encrypt(rmkBytes: Buffer, keyId: string, context: Record<string, string>): Promise<Buffer> {
