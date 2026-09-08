@@ -182,6 +182,32 @@ of time, before you need it.
 
 **Details:** [specs/securegit/09-rotation-recovery.md](../../specs/securegit/09-rotation-recovery.md)
 
+## I lost my key and a teammate added a new one for me — can I read the old files too, or just new ones from now on?
+
+**The old files too, not just new ones.** Adding your new key shares
+*every generation your teammate currently holds* with it, not only the
+newest one — being re-added is really no different from onboarding a
+brand-new team member, who also gets full historical access, not a
+"going forward only" view. This surprises people, since it's the
+opposite of what you might expect from "starting fresh" on a new device.
+
+The only case where you *wouldn't* get everything back: if your
+teammate themselves only holds some of the history (say, they joined
+after an earlier rotation and never had the oldest generations) — they
+can only share what they actually have.
+
+One important exception, worth knowing before it happens to you: if the
+device you lost might be compromised — stolen, not just misplaced — simply
+being re-added is the wrong move, because it hands your *new* key the
+same old access a thief's copy of your *old* key already has. What you
+actually want then is the same "someone left the team" flow above
+(`remove-recipient` your old key, `rotate`, `reencrypt`), then a fresh
+`add-recipient` for your new one — that stops the old, possibly-stolen
+key from reading anything written from now on, which simply re-adding a
+new key never does on its own.
+
+**Details:** [specs/securegit/08-multi-recipient.md](../../specs/securegit/08-multi-recipient.md)
+
 ## Can GitHub, a cloud backup, or anyone else who stores my repo read my files?
 
 No, not the files you've told it to protect. Everywhere your repository

@@ -9,12 +9,23 @@ who wants the exact details.
 
 ## The one secret that actually matters
 
-Underneath everything, there is exactly **one secret per repository**:
-a 32-byte number, generated once, that everything else in this page is
-really just "how is *this* protected" or "what gets calculated *from*
-it automatically." This project calls it the **repository master key**.
+Underneath everything, each repository has, at any given moment, exactly
+**one secret currently in use**: a 32-byte number this project calls the
+**repository master key**. Everything else in this page is really just
+"how is *this* protected" or "what gets calculated *from* it
+automatically."
 
-A few things are true of it, always:
+"At any given moment" matters: rotating your key (`securegit key
+rotate`) doesn't erase the old master key and replace it — it creates a
+new one, called a **generation**, on top. Every file encrypted under
+generation 1 still needs generation 1's master key to open; a file you
+touch after rotating gets encrypted under generation 2's. Your keyring
+quietly holds every generation you've ever had, so nothing you've
+already written ever becomes unreadable to you — but strictly, "the
+master key" always means one specific generation's, not one single
+number that lives forever.
+
+A few things are true of every generation's master key, always:
 
 - It's generated on your computer and never leaves it — except when a
   hardware key or a cloud vault holds it instead, in which case it never
@@ -24,13 +35,6 @@ A few things are true of it, always:
 - It's the one thing that, if you lost every copy of it with no
   recovery plan, would mean your encrypted files are gone for good — see
   [02-faq.md](02-faq.md#what-happens-if-i-lose-my-laptop-or-forget-my-passphrase).
-
-Rotating your key (`securegit key rotate`) doesn't erase the old one —
-it adds a new "generation" on top. Every file encrypted under
-generation 1 still needs generation 1's key to open; a file you touch
-after rotating gets encrypted under generation 2. Your keyring quietly
-holds every generation you've ever had, so nothing you've already
-written ever becomes unreadable to you.
 
 **Details:** [05-key-hierarchy.md](../../specs/securegit/05-key-hierarchy.md)
 
@@ -51,14 +55,20 @@ what this project calls a **provider**. Two are available from the
   steals the locked file itself.
 - **A YubiKey or similar hardware security key**
   (`securegit key add-provider yubikey-piv --slot <slot>` or
-  `yubikey-fido2`). The master key gets locked using a calculation the
-  *physical device itself* performs — you plug it in and touch it, and
-  the secret math never happens anywhere your computer could read it.
-  Even if your whole computer were compromised, the key material on the
-  device stays out of reach without the device physically present and
-  touched. Confirmed against a real YubiKey: adding it this way
-  produces a genuinely usable slot, and unlocking through it afterward
-  actually works, even with the wrong passphrase typed.
+  `yubikey-fido2` — a slightly different mechanism each way, smartcard
+  mode versus the key's authentication mode, though the practical effect
+  is the same). Unlocking needs one calculation that only the *physical
+  device itself* can perform — its own internal secret never leaves it,
+  ever, under any circumstances. What that calculation produces does
+  briefly pass back to your computer to finish unlocking the repository,
+  the same as typing a passphrase does — so the real protection isn't
+  "your computer never touches the secret," it's this: without the
+  physical device present and touched, your computer alone — even fully
+  compromised — cannot perform that one calculation, at all, no matter
+  how much malware or time an attacker has. Confirmed against a real
+  YubiKey: adding it this way produces a genuinely usable slot, and
+  unlocking through it afterward actually works, even with the wrong
+  passphrase typed.
 
 One more is real, working, tested code — just not yet reachable from the
 `securegit` command itself (see
@@ -67,11 +77,15 @@ for exactly what "not yet reachable" means):
 
 - **A cloud key vault** (AWS, Google Cloud, or Azure's key-management
   service). The vault locks and unlocks your master key on request, over
-  the network. This one comes with a real, deliberate limit: it can
-  never be your *only* way in. A cloud provider's vault is still
-  something that provider could theoretically be compelled to unlock —
-  useful as a company-wide "break glass" backup, never as the single
-  point of trust the whole tool exists to avoid.
+  the network — concretely, your actual master key is sent to the cloud
+  provider's service in plain form each time, and comes back in plain
+  form each time it unlocks, the same way a locksmith briefly has to
+  handle your actual key to cut you a copy. This one comes with a real,
+  deliberate limit: it can never be your *only* way in. A cloud
+  provider's vault is still something that provider could theoretically
+  be compelled to unlock — useful as a company-wide "break glass"
+  backup, never as the single point of trust the whole tool exists to
+  avoid.
 
 The difference between the last two matters enough to have a name:
 **can whoever holds this lock be forced to open it without you?** A
@@ -85,13 +99,21 @@ why it's never allowed to be the *only* lock on a repository.
 ## The key for one specific file — which you never see
 
 securegit does **not** keep a separate stored secret for every file you
-protect. Instead, every time it needs one, it recalculates a per-file
-key on the spot, from two things: your master key, and that exact
-file's content. Change one byte of the file, and its per-file key comes
-out completely different — but hand it the same content twice, and it
-always recalculates the *identical* key, every time.
+protect. Instead, every time it needs one, it *recalculates* a per-file
+key on the spot, from two things: your master key, and a small,
+non-secret fingerprint of that exact file's content — a bit like a
+tamper-evident stamp, calculated once when the file is encrypted and
+saved alongside the encrypted bytes themselves (never separately, never
+anywhere else). That stamp is what makes recalculating the same key
+later possible at all: reading a file back doesn't need to reconstruct
+the fingerprint from scratch, only read the one already sitting right
+there with it, then combine it with your master key the same way as
+before.
 
-That last property is deliberate, not incidental: it's what makes
+Change one byte of the file, and its stamp — and so its per-file key —
+comes out completely different. Encrypt the exact same content twice,
+and both the stamp and the per-file key come out *identical*, every
+time. That last property is deliberate, not incidental: it's what makes
 `git diff`/`git status` behave sanely on encrypted files (committing the
 same content twice produces the same encrypted bytes, not a noisy,
 meaningless diff every time), and it means there's genuinely nothing
@@ -100,11 +122,11 @@ to begin with, only ever recalculated when needed. It also means
 figuring out one file's key (which nobody can do without your master
 key anyway) reveals nothing at all about any other file's key.
 
-Every protected file also carries a small tamper-evident stamp,
-calculated the same automatic way. If even a single bit of an encrypted
-file changes after the fact — a storage glitch, a bad merge, anything —
-unlocking it fails loudly and immediately, instead of quietly handing
-you corrupted data. See
+Separately, the encryption itself (AES-256-GCM) carries its own
+authentication check, stored alongside the stamp — so if even a single
+bit of an encrypted file changes after the fact — a storage glitch, a
+bad merge, anything — unlocking fails loudly and immediately, instead
+of quietly handing you corrupted data. See
 [02-faq.md](02-faq.md#what-if-an-encrypted-file-gets-corrupted--would-i-even-find-out)
 for what this does and doesn't catch.
 
@@ -125,17 +147,30 @@ that only their private half can open. From that point on, their
 computer can unlock the repository entirely on its own; nothing further
 ever has to flow through you.
 
+**This cuts the other way too, and it's worth being direct about:**
+removing someone only ever protects generations created *after* they're
+removed — `securegit key rotate` only wraps its new generation for
+whoever is currently on the recipient list, so a removed person is
+automatically left out of everything from that point forward. It cannot
+reach back and revoke a master key generation they already received
+while they had legitimate access — nothing can, once a key has actually
+been handed to someone. See
+[02-faq.md](02-faq.md#someone-left-the-team-can-i-lock-them-out) for
+what "locking someone out" actually means here.
+
 **Details:** [08-multi-recipient.md](../../specs/securegit/08-multi-recipient.md)
 
 ## Not having to unlock every single time: the session
 
 Once you run `securegit unlock`, you're not asked for your passphrase
 (or touch prompt, for a hardware key) on every single `git` command
-after that — the unlocked master key is cached, for a limited time (a
-few hours, by default), in another file outside your repository. This
-cache is exactly as sensitive as your master key itself while it
-exists, which is why it lives outside the repo, expires on its own, and
-is never something `securegit` writes anywhere Git could ever commit.
+after that — the unlocked master key itself, not some lesser stand-in
+for it, is cached in another file outside your repository, for a
+limited time (a few hours, by default). Holding that cache file while
+it's valid is, functionally, the same as holding the master key
+itself — treat access to it with exactly that seriousness. It's why the
+cache lives outside the repo, expires on its own, and is never
+something `securegit` writes anywhere Git could ever commit.
 
 **Details:** [07-unlock-session.md](../../specs/securegit/07-unlock-session.md)
 
@@ -149,6 +184,12 @@ later to get back into a repository even if every other copy of your
 key is gone. It's a completely different mechanism from a passphrase or
 hardware key — worth setting up once, before you ever need it, not
 after.
+
+Treat it as what it actually is: a **bearer credential**, not merely a
+backup copy sitting inert until you need it. Anyone who obtains the
+code — not just you — can use it to recover your repository's key,
+exactly the same way you would. Store it the way you'd store a spare
+physical key to your house, not a note to yourself.
 
 **Details:** [09-rotation-recovery.md](../../specs/securegit/09-rotation-recovery.md)
 
