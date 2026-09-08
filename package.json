@@ -1,5 +1,5 @@
 {
-  "name": "trinoris-securegit-workspace",
+  "name": "trinoris-secure",
   "private": true,
   "description": "Workspace root for @trinoris/securegit and @trinoris/securelib. Not published — see packages/securegit and packages/securelib for the real packages.",
   "workspaces": [

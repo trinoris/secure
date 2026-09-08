@@ -16,21 +16,28 @@ all pass the full conformance suite (`provider.conformance.test.ts`,
 `describe.each` over all four). `registry.ts`'s `loadProvider()` resolves
 `passphrase-file`/`kms-envelope` eagerly and `yubikey-piv`/`yubikey-fido2`
 by dynamic `import()` — see "Loading a provider package without paying
-for it" below. **What's genuinely not built, drawn as an honest line, not
-a gap glossed over:** the real transports the last three need to talk to
-actual hardware or a cloud — `PivCard`/`Fido2Authenticator`'s real PC/SC
-and CTAP2/HID implementations, and `KmsBackend`'s real AWS/GCP/Azure
-signed-HTTPS backend. Every `KeyProvider`'s own logic (key derivation,
-AEAD wrap/unwrap, AAD binding, the `ctx.interactive` gate) is real and
-tested against a real cryptographic fake (a genuine ECDH computation for
-PIV, a genuine HMAC for FIDO2) — only the hardware/network call at the
-very bottom is faked, exactly the boundary [00](00-test-plan.md)'s
-"Deliberately not phased" note and each provider's own "Test plan"
-section below already drew: a real-hardware or real-cloud integration
-test is separate, manual, and can never run in CI.
-[00](00-test-plan.md)'s note no longer covers `key add-provider`/
-`remove-provider`/`list` themselves (built), only these three providers'
-own real-world transports.
+for it" below. **`AwsKmsBackend` (`aws-kms-backend.ts`) is also built** — real
+hand-rolled AWS SigV4 signing, `node:crypto` + `node:https`, no SDK —
+but **not verified against a real AWS KMS endpoint**: this environment
+has no AWS credentials, so it's tested structurally (deterministic,
+sensitive to every input, matches AWS's documented `Authorization`
+format) rather than byte-exact against an AWS-computed signature; a
+real-credential integration test is written and ready
+(`describe.skipIf`), waiting on real credentials to actually run.
+**What's genuinely not built, drawn as an honest line, not a gap glossed
+over:** `PivCard`/`Fido2Authenticator`'s real PC/SC and CTAP2/HID
+implementations, and `GcpKmsBackend`/`AzureKmsBackend`. Every
+`KeyProvider`'s own logic (key derivation, AEAD wrap/unwrap, AAD
+binding, the `ctx.interactive` gate) is real and tested against a real
+cryptographic fake (a genuine ECDH computation for PIV, a genuine HMAC
+for FIDO2) — only the hardware call at the very bottom is faked for PIV/
+FIDO2, exactly the boundary [00](00-test-plan.md)'s "Deliberately not
+phased" note and each provider's own "Test plan" section below already
+drew: a real-hardware integration test is separate, manual, and can
+never run in CI regardless of credentials. [00](00-test-plan.md)'s note
+no longer covers `key add-provider`/`remove-provider`/`list` themselves
+(built), only the PIV/FIDO2 hardware transports and the two cloud
+backends not yet built.
 
 `key add-provider`/`remove-provider`/`list` ([10](10-cli-contract.md)) are
 implemented as `addProvider()`/`removeProvider()` in `src/keyring.ts`.
@@ -163,7 +170,7 @@ existing code.
 | `yubikey-piv` | no | **`YubikeyPivProvider` built, real PC/SC transport not** | `packages/securelib/src/piv.ts` — full conformance suite passes against a `FakePivCard` performing real P-256 ECDH (`piv.test.ts`, `provider.conformance.test.ts`). The `PivCard` port itself is the honest boundary: a real `@trinoris/securelib-piv` companion package implementing it against actual PC/SC hardware doesn't exist yet — see "Concrete designs" below. |
 | `yubikey-fido2` | no | **`YubikeyFido2Provider` built, real CTAP2/HID transport not** | `packages/securelib/src/fido2.ts` — same shape, against a `FakeFido2Authenticator` (`fido2.test.ts`). See "Concrete designs" below. |
 | `recovery-code` | no | built, but not a `KeyProvider` | Not interactive; used by `import-recovery` ([09](09-rotation-recovery.md)). As built, this is *not* a `KeyProvider` implementation behind this port — `src/recovery.ts` derives its wrap key directly from the code via HKDF and does its own AES-256-GCM wrap/unwrap, bypassing `provider.ts` entirely. The RMKs it recovers are then handed to an ordinary `PassphraseFileProvider` (via `keyringFromRecoveredGenerations`) to become the new local keyring's actual provider. The reason: this port's `init`/`wrap`/`unwrap` shape is built around one *persistent* secret per generation (a passphrase, a TPM binding); a recovery code instead needs to decrypt *every* generation at once under one code, which doesn't fit that per-generation shape without distortion. |
-| `kms-envelope` | **yes** | **`KmsEnvelopeProvider` built and wired into `registry.ts`; no real cloud backend yet** | `packages/securelib/src/kms-envelope.ts` — full conformance suite passes against a `FakeKmsBackend`. A real `AwsKmsBackend`/`GcpKmsBackend`/`AzureKmsBackend` (hand-rolled request signing, per "Concrete designs" below) isn't built. |
+| `kms-envelope` | **yes** | **`KmsEnvelopeProvider` + `AwsKmsBackend` built; not verified against real AWS** | `packages/securelib/src/kms-envelope.ts` — full conformance suite passes against a `FakeKmsBackend`. `aws-kms-backend.ts`'s `AwsKmsBackend` implements real hand-rolled AWS SigV4 signing (`node:crypto` + `node:https`, no SDK) — structurally tested (deterministic, sensitive to every input), but **not verified against a real AWS KMS endpoint**: no AWS credentials exist in the environment this was built in. A real-credentials-gated integration test (`aws-kms-backend.test.ts`, `describe.skipIf`) is written and ready — run it against a real KMS key before relying on this in production. `GcpKmsBackend`/`AzureKmsBackend` aren't built. |
 
 ## `custodial` is the field that matters
 
@@ -318,12 +325,21 @@ backend still held could be unwrapped by a *different* `KmsEnvelopeProvider`
 instance than the one that wrapped it, as long as `repoId`/`generation`
 still matched — fixed by checking `keyId` against `ctx.state`, the same
 "fails rather than silently succeeding somewhere it shouldn't" property
-every other binding here already had. **Not built:** a real
-`AwsKmsBackend`/`GcpKmsBackend`/`AzureKmsBackend` implementing
-`KmsBackend` against an actual cloud, and the real-credential integration
-test (skipped unless real credentials are present, `aws-vault`-style,
-never committed) that would exercise one — appropriate once a real
-backend exists, not before.
+every other binding here already had. **`AwsKmsBackend` is built**
+(`aws-kms-backend.ts`) — hand-rolled SigV4 signing per AWS's own
+published algorithm, `node:crypto` + `node:https`, no SDK dependency,
+exactly as designed above. **Honest limit: not verified against a real
+AWS KMS endpoint** — no AWS credentials exist in the environment this
+was built in, so correctness rests on following the documented algorithm
+precisely plus structural tests (deterministic; sensitive to the body,
+secret key, and timestamp; well-formed `Authorization` header), not a
+byte-exact match against an AWS-computed signature. The real-credential
+integration test the design called for (`aws-kms-backend.test.ts`,
+`describe.skipIf`, skipped unless `AWS_ACCESS_KEY_ID`/
+`AWS_SECRET_ACCESS_KEY`/`AWS_KMS_TEST_KEY_ID` are present, never
+committed) is written and ready to run — run it against a real KMS key
+before relying on this in production. `GcpKmsBackend`/`AzureKmsBackend`
+aren't built.
 
 ### `yubikey-piv` — YubiKey / any PIV smartcard
 
@@ -658,6 +674,9 @@ packages on disk, not a mock.
 | `KmsEnvelopeProvider` passes the full conformance suite against a `FakeKmsBackend` | `src/provider.conformance.test.ts` | — | ✅ |
 | `KmsEnvelopeProvider.wrap`/`unwrap` bind `repoId`/`generation` into the backend's own AAD/encryption-context field | `src/kms-envelope.test.ts` | — | ✅ (via `unwrap()` fails when the wrapped ciphertext was encrypted under a different `repoId`/`generation`, enforced by the fake's own context check) |
 | `KmsEnvelopeProvider.unwrap` rejects a wrapped payload whose `keyId` doesn't match the caller's own configured key | `src/kms-envelope.test.ts` | — | ✅ — caught a real bug: `unwrap()` originally trusted the payload's own `keyId` instead of checking it, see "Concrete designs" above |
+| `AwsKmsBackend`'s `Authorization` header matches AWS's documented SigV4 format; deterministic; sensitive to body/secret-key/timestamp | `src/aws-kms-backend.test.ts` | — | ✅ (structural — not verified against a real AWS-computed signature, see "Concrete designs" above) |
+| `AwsKmsBackend.encrypt`/`decrypt` send the correct JSON action/body and decode the response | `src/aws-kms-backend.test.ts` | — | ✅ |
+| `AwsKmsBackend` wraps and unwraps a real key via a real AWS KMS key | `src/aws-kms-backend.test.ts` | — | written, `describe.skipIf` — skipped: no real AWS credentials in this environment |
 | A repository with only `kms-envelope` wrapping the current generation is a `verify` finding (existing custodial-only check, no new logic) | `src/verify.test.ts` | — | not built — `verify.ts` hasn't been extended to exercise a real `KmsEnvelopeProvider` yet, though the underlying custodial-only check it would reuse is already built and tested against `providers: KeyProvider[]` generically |
 | `YubikeyPivProvider` passes the full conformance suite against a `FakePivCard` | `src/provider.conformance.test.ts` | — | ✅ |
 | `YubikeyPivProvider.unwrap` throws a specific, actionable error when `ctx.interactive` is `false` | `src/piv.test.ts` | — | ✅ |

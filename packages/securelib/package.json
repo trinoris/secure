@@ -31,6 +31,10 @@
       "types": "./dist/kms-envelope.d.ts",
       "import": "./dist/kms-envelope.js"
     },
+    "./aws-kms-backend": {
+      "types": "./dist/aws-kms-backend.d.ts",
+      "import": "./dist/aws-kms-backend.js"
+    },
     "./piv": {
       "types": "./dist/piv.d.ts",
       "import": "./dist/piv.js"

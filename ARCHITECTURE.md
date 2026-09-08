@@ -248,13 +248,17 @@ after the fact — real, avoidable risk for no benefit.
    real cryptographic fake (`kms-envelope.ts`, `piv.ts`, `fido2.ts`) — a
    real bug caught along the way: `KmsEnvelopeProvider.unwrap()`
    originally trusted the wrapped payload's own `keyId` instead of
-   checking it against the caller's configured key. **What's left, and
-   deliberately not attempted without real access to verify it against:**
-   a real `KmsBackend` (AWS/GCP/Azure, hand-rolled signed HTTPS — needs no
-   hardware, just real cloud credentials to test against) and the two
-   real companion packages themselves, `@trinoris/securelib-piv`/
-   `-fido2` (PC/SC and CTAP2/HID — need real hardware, which a
-   real-hardware integration test can never run in CI regardless).
+   checking it against the caller's configured key. **`AwsKmsBackend`
+   (`aws-kms-backend.ts`) is also built** — hand-rolled SigV4 signing,
+   `node:crypto` + `node:https`, no SDK — structurally tested (deterministic,
+   sensitive to every input, well-formed `Authorization` header) but
+   **not verified against a real AWS KMS endpoint**: this environment has
+   no AWS credentials. A real-credential integration test is written and
+   ready (`describe.skipIf`) — run it against a real key before trusting
+   this in production. **What's left, not attempted because real hardware
+   is the only way to verify it and can never run in CI regardless:** the
+   two real companion packages, `@trinoris/securelib-piv`/`-fido2` (PC/SC
+   and CTAP2/HID), plus `GcpKmsBackend`/`AzureKmsBackend`.
 5. **`@trinoris/securedoc`** (future, unscoped) becomes a second real
    consumer of `securelib`, proving the extraction was worth doing rather
    than merely aesthetic.
