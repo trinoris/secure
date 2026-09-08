@@ -126,7 +126,16 @@ export async function readSession(opts: ReadSessionOptions): Promise<KeySource> 
     return lockedKeySource(); // no session: an ordinary locked state, not an error
   }
 
-  if ((stats.mode & 0o077) !== 0) {
+  // POSIX only: on win32, fs.Stats.mode is a synthesized value (typically
+  // 0o666 for any ordinary writable file, whether or not the OS actually
+  // grants other accounts access) — it doesn't reflect real NTFS ACLs, and
+  // treating it as a security signal here would both prove nothing and
+  // self-discard every session file on every read (0o666 & 0o077 !== 0
+  // unconditionally). Protection on Windows instead falls back to the
+  // filesystem's own default: only the owning account (and admins) can
+  // ordinarily read another user's profile directory. See
+  // 07-unlock-session.md's "Windows" note.
+  if (process.platform !== 'win32' && (stats.mode & 0o077) !== 0) {
     warn(
       `securegit: discarding session file with unsafe permissions (${(stats.mode & 0o777).toString(8)})\n` +
         `  file:   ${path}\n` +

@@ -137,6 +137,27 @@ safely. A parse failure or a version it doesn't recognise is a case where the
 safest action is to do nothing to the file and simply report "locked" — the
 same as if it had never been unlocked.
 
+### Windows
+
+The "unsafe permissions" row above is POSIX-only. `fs.Stats.mode` on native
+Windows (not WSL, which is a real POSIX filesystem) is a synthesized value —
+typically `0o666` for any ordinary writable file, regardless of what the OS
+actually grants other accounts — so it carries no real signal and is skipped
+there entirely (`process.platform === 'win32'`); checking it unconditionally
+would not add protection, and would self-discard every session on its very
+next read (`0o666 & 0o077 !== 0`, always). `mkdir`/`writeFile`'s `mode: 0o700`/
+`0o600` options are effectively no-ops on Windows for the same reason.
+
+Protection there falls back to the filesystem's own default: only the owning
+account (and administrators) can ordinarily read another user's profile
+directory. This is the same implicit boundary every other dotfile under
+`%USERPROFILE%` already relies on — not a `securegit`-specific guarantee, and
+weaker than the POSIX case (an administrator, or anything already running as
+the same user, has no additional barrier). Nothing about this is currently
+verified against a real Windows machine; this whole project's own development
+and testing has run under WSL2, which reports as `linux` and gets the full
+POSIX path above.
+
 ### A known gap: interactive prompting isn't wired yet
 
 `src/bin/securegit.ts` reads real stdin to a `Buffer` for `init`/`unlock`'s

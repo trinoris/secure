@@ -203,6 +203,25 @@ and protected branches. `securegit` states the limit rather than implying the
 authentication tag covers more than it does — a per-blob GCM tag proves *this
 ciphertext was produced by a key holder*, not *this ciphertext belongs here*.
 
+**A note on cross-*repository* transplant, not just cross-path within one:**
+the envelope's own AAD ([04](04-envelope-format.md)) never includes a
+`repoId` — only the header and, when `bindPath` is set, the path. That's
+deliberately different from every other layer that moves an RMK across a
+trust boundary (key-provider wrap/unwrap, recipient wrapping, the recovery
+file, and the session file all bind `repoId` — [06](06-key-provider-port.md),
+[08](08-multi-recipient.md), [09](09-rotation-recovery.md),
+[07](07-unlock-session.md)). It is not a gap: decrypting a blob needs that
+repository's specific RMK, and `keyring.ts` generates every RMK as
+`randomBytes(32)` — never derived from the passphrase or anything else
+shared between repositories — so even two repositories deliberately set up
+with the same passphrase end up with cryptographically independent RMKs. An
+attacker who copies a blob from repository A into repository B is in exactly
+the T3/T4 position below, not a new one: the copied ciphertext is real, valid
+ciphertext, it simply doesn't decrypt under B's RMK, the same way a
+same-repo relocated or rolled-back blob doesn't authenticate against the
+context it was moved into. Binding `repoId` at the file-envelope layer too
+would be redundant with this, not a stronger guarantee than it.
+
 **Narrowed further by commit signing (✅ built — [08-multi-recipient.md](08-multi-recipient.md)'s
 "Commit signing"), where a merge reviewer actually runs it.** T3/T4 never
 had a *content* signature to check — the relocated/rolled-back blob is

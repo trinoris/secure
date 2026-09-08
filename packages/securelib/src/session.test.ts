@@ -166,7 +166,7 @@ describe('expiry', () => {
   });
 });
 
-describe('permission hardening', () => {
+describe.skipIf(process.platform === 'win32')('permission hardening (POSIX only)', () => {
   it('a session file with mode 0644 is deleted rather than trusted', async () => {
     await writeSession({ repoId: REPO, path: sessionPath, entries: ENTRIES, current: KEY_ID });
     const { chmod } = await import('node:fs/promises');
@@ -190,6 +190,16 @@ describe('permission hardening', () => {
     await writeSession({ repoId: REPO, path: sessionPath, entries: ENTRIES, current: KEY_ID });
     const keys = await readSession({ repoId: REPO, path: sessionPath });
     expect(keys.current()).not.toBeNull();
+  });
+});
+
+describe.skipIf(process.platform !== 'win32')('permission hardening (win32)', () => {
+  it('never discards a session file based on synthesized mode bits', async () => {
+    await writeSession({ repoId: REPO, path: sessionPath, entries: ENTRIES, current: KEY_ID });
+    const warn = vi.fn();
+    const keys = await readSession({ repoId: REPO, path: sessionPath, warn });
+    expect(keys.current()).not.toBeNull();
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

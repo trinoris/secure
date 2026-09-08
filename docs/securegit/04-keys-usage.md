@@ -122,6 +122,22 @@ to begin with, only ever recalculated when needed. It also means
 figuring out one file's key (which nobody can do without your master
 key anyway) reveals nothing at all about any other file's key.
 
+Be aware of the flip side of that same deliberate choice: anyone who can
+see your encrypted repository — without ever unlocking it — can tell
+whether two files currently hold the same content, because their
+encrypted bytes come out identical too. Usually harmless (that's exactly
+what makes diffs sane), but worth knowing if some files' *sizes* or
+*sameness* would themselves be sensitive — a config file that's either
+one of two known values, say. Two settings exist specifically for this: `bindPath` (this page, above)
+stops the *same content at two different paths* from producing matching
+ciphertext (the same path holding the same content still matches on
+purpose — that's the diff-sanity property) — and a separate padding
+option rounds file sizes up so they stop leaking exact byte counts. See
+[16-adversarial-integrity.md](../../specs/securegit/16-adversarial-integrity.md)
+("T9") and
+[14-metadata-leakage.md](../../specs/securegit/14-metadata-leakage.md)
+for the precise details.
+
 Separately, the encryption itself (AES-256-GCM) carries its own
 authentication check, stored alongside the stamp — so if even a single
 bit of an encrypted file changes after the fact — a storage glitch, a
