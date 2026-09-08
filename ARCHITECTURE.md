@@ -156,6 +156,11 @@ is a packaging change, not a behavior change.
 
 ### Provider companion packages — `@trinoris/securelib-piv`, `@trinoris/securelib-fido2`
 
+**`@trinoris/securelib-piv` exists now, built and verified against a
+real YubiKey — not just this section's original design.**
+`@trinoris/securelib-fido2` remains design-only; no FIDO2-only hardware
+has been available to build and verify it against.
+
 Renamed from the `securegit-piv` name used when these were first
 proposed, per this document's own core insight: a `KeyProvider`
 implementation has no idea what its caller does with the key it
@@ -236,7 +241,7 @@ after the fact — real, avoidable risk for no benefit.
    dependency" — this is the point `securegit`'s own `package.json` gains
    a real, external `@trinoris/securelib` dependency rather than a
    workspace link.
-4. **IN PROGRESS. Build the provider companion packages against the
+4. **IN PROGRESS (PIV done, verified against real hardware). Build the provider companion packages against the
    now-public port.** Packaging is settled and built
    (`06-key-provider-port.md`'s "Loading a provider package without
    paying for it"): `registry.ts`'s `loadProvider()` resolves
@@ -262,10 +267,21 @@ after the fact — real, avoidable risk for no benefit.
    run against a real cloud account** — no credentials exist in this
    environment. Each has a real-credential integration test written and
    ready (`describe.skipIf`) — run one against a real key before trusting
-   it in production. **What's left, not attempted because real hardware
-   is the only way to verify it and can never run in CI regardless:** the
-   two real companion packages, `@trinoris/securelib-piv`/`-fido2` (PC/SC
-   and CTAP2/HID).
+   it in production. **`@trinoris/securelib-piv` — the real PC/SC
+   companion package — is built and verified against actual hardware**:
+   a physical YubiKey 5C NFC (firmware 5.8.0) became available during
+   this work. `packages/securelib-piv`'s `RealPivCard` shells out to
+   `ykman`/OpenSC's `pkcs11-tool` — zero npm dependencies, chosen
+   deliberately over hand-rolling raw PC/SC APDU bytes against real,
+   limited-retry hardware (a malformed hand-built command risks burning
+   a PIN or PUK try where OpenSC's mature PIV driver already gets it
+   right). The card's own ECDH output was independently confirmed to
+   match a `node:crypto` computation exactly, and a full
+   `YubikeyPivProvider` wrap()/unwrap() round trip through the real card
+   passed — the first genuinely hardware-verified piece of this whole
+   design, not merely fake- or structurally-tested. **What's left:**
+   `@trinoris/securelib-fido2`'s real CTAP2/HID transport — no FIDO2-only
+   hardware was available to verify it against.
 5. **`@trinoris/securedoc`** (future, unscoped) becomes a second real
    consumer of `securelib`, proving the extraction was worth doing rather
    than merely aesthetic.

@@ -28,15 +28,23 @@ fake vault that actually runs AES-256-GCM) — AWS's SigV4 can only be
 checked structurally, since byte-exactness needs a live AWS endpoint to
 compare against. Each has a real-credential integration test written
 and ready (`describe.skipIf`), waiting on real credentials to actually
-run. **What's genuinely not built, drawn as an honest line, not a gap
-glossed over:** `PivCard`/`Fido2Authenticator`'s real PC/SC and
-CTAP2/HID implementations — hardware this environment doesn't have and
-CI can never have either, a fundamentally different kind of gap than
-"untested cloud credentials." Every `KeyProvider`'s own logic (key
-derivation, AEAD wrap/unwrap, AAD binding, the `ctx.interactive` gate)
-is real and tested against a real cryptographic fake (a genuine ECDH
-computation for PIV, a genuine HMAC for FIDO2) — only the hardware call
-at the very bottom is faked for PIV/FIDO2, exactly the boundary
+run. **`@trinoris/securelib-piv` — the real PC/SC companion package — is
+also built, and verified against actual hardware**, not a fake: a
+physical YubiKey 5C NFC (firmware 5.8.0) became available during this
+work. `packages/securelib-piv`'s `RealPivCard` shells out to `ykman`/
+OpenSC's `pkcs11-tool` (zero npm dependencies, deliberately chosen over
+hand-rolling raw PC/SC APDU bytes against real, limited-retry hardware
+— see "Concrete designs" below). The card's own ECDH output was
+independently confirmed correct against a `node:crypto` computation,
+and a full `YubikeyPivProvider` wrap()/unwrap() round trip through the
+real card passed. **What's still genuinely not built:**
+`@trinoris/securelib-fido2`'s real CTAP2/HID transport — no FIDO2-only
+hardware was available to verify it against, a different situation from
+PIV now that real PIV hardware has been used. Every `KeyProvider`'s own
+logic (key derivation, AEAD wrap/unwrap, AAD binding, the
+`ctx.interactive` gate) is real and tested against a real cryptographic
+fake for FIDO2, and against real hardware for PIV — only FIDO2's
+hardware call at the very bottom is still faked, exactly the boundary
 [00](00-test-plan.md)'s "Deliberately not phased" note and each
 provider's own "Test plan" section below already drew. [00](00-test-plan.md)'s
 note no longer covers `key add-provider`/`remove-provider`/`list`
@@ -170,7 +178,7 @@ existing code.
 | `passphrase-file` | no | **v1** | scrypt → KEK → AES-256-GCM. Works everywhere, including WSL and CI. |
 | `os-keychain` | no | designed | DPAPI / macOS Keychain / libsecret. Better UX; no keychain under WSL, so it always needs a fallback. |
 | `tpm2` | no | designed | Seals the RMK to PCRs. Machine-bound: a re-imaged laptop loses it, so it is never the only path. |
-| `yubikey-piv` | no | **`YubikeyPivProvider` built, real PC/SC transport not** | `packages/securelib/src/piv.ts` — full conformance suite passes against a `FakePivCard` performing real P-256 ECDH (`piv.test.ts`, `provider.conformance.test.ts`). The `PivCard` port itself is the honest boundary: a real `@trinoris/securelib-piv` companion package implementing it against actual PC/SC hardware doesn't exist yet — see "Concrete designs" below. |
+| `yubikey-piv` | no | **built and verified against real hardware** | `packages/securelib/src/piv.ts` (`YubikeyPivProvider`) plus the real `packages/securelib-piv` companion package (`RealPivCard`, shells out to `ykman`/`pkcs11-tool`, zero npm dependencies). Tested against a physical YubiKey 5C NFC (firmware 5.8.0): a full `YubikeyPivProvider` wrap()/unwrap() round trip through the real card passes, and the card's own ECDH output was independently confirmed to match a `node:crypto` computation byte for byte. The only one of the three "next providers" verified against real hardware rather than a fake or structurally — see "Concrete designs" below. |
 | `yubikey-fido2` | no | **`YubikeyFido2Provider` built, real CTAP2/HID transport not** | `packages/securelib/src/fido2.ts` — same shape, against a `FakeFido2Authenticator` (`fido2.test.ts`). See "Concrete designs" below. |
 | `recovery-code` | no | built, but not a `KeyProvider` | Not interactive; used by `import-recovery` ([09](09-rotation-recovery.md)). As built, this is *not* a `KeyProvider` implementation behind this port — `src/recovery.ts` derives its wrap key directly from the code via HKDF and does its own AES-256-GCM wrap/unwrap, bypassing `provider.ts` entirely. The RMKs it recovers are then handed to an ordinary `PassphraseFileProvider` (via `keyringFromRecoveredGenerations`) to become the new local keyring's actual provider. The reason: this port's `init`/`wrap`/`unwrap` shape is built around one *persistent* secret per generation (a passphrase, a TPM binding); a recovery code instead needs to decrypt *every* generation at once under one code, which doesn't fit that per-generation shape without distortion. |
 | `kms-envelope` | **yes** | **`KmsEnvelopeProvider` + all three cloud backends built; none verified against a real cloud** | `packages/securelib/src/kms-envelope.ts` — full conformance suite passes against a `FakeKmsBackend`. `aws-kms-backend.ts` (hand-rolled SigV4), `gcp-kms-backend.ts` (service-account JWT-bearer OAuth + REST), and `azure-kms-backend.ts` (Azure AD client-credentials + REST, caller-supplied IV packed with the GCM tag into one opaque blob) each implement `KmsBackend` from `node:crypto`/`node:https` alone, no cloud SDKs. GCP's JWT signature and Azure's AES-256-GCM framing are verified with *real* cryptography in tests (a generated RSA keypair; a fake vault that actually runs AES-256-GCM) — AWS's SigV4 is checked only structurally, since a JWT/AEAD round-trip is verifiable offline but SigV4 byte-correctness isn't without a live AWS endpoint. None of the three has run against a real cloud account — no credentials exist in the environment this was built in. Each has a real-credentials-gated integration test (`describe.skipIf`), written and ready. |
@@ -452,13 +460,41 @@ faked, not the cryptography itself. Passes the full conformance suite
 `ctx.interactive` gate throws before ever touching the card, and
 `wrap()` never calls `ecdh()` at all (proven by a call-counting wrapper
 around the fake), matching "wrap() only ever touches the card's public
-key" above. **Not built:** a real `@trinoris/securelib-piv` companion
-package implementing `PivCard` against actual PC/SC hardware. A
-real-hardware integration test is separate, manual, and can never run in
-CI without a physical key attached — an honest limit, not a gap to
-silently paper over, the same way this project already treats "code
-execution on an unlocked workstation" as a named boundary rather than a
-solved problem ([01](01-threat-model.md)).
+key" above.
+
+**The real `@trinoris/securelib-piv` companion package is built and
+verified against real hardware** — `packages/securelib-piv`
+(`RealPivCard`). Zero npm dependencies: rather than a native PC/SC addon
+(`node-pcsclite`, needing per-platform compilation), it shells out to
+already-installed system tools — `ykman piv keys export` for
+`getPublicKey()` (no PIN needed, reads the card's own metadata directly)
+and OpenSC's `pkcs11-tool --derive --mechanism ECDH1-DERIVE` for
+`ecdh()` (the on-card operation; only the shared secret returns).
+Deliberately chosen over hand-rolling raw PC/SC APDU bytes (VERIFY PIN,
+GENERAL AUTHENTICATE's dynamic authentication template): against real,
+limited-retry hardware, a malformed hand-built APDU risks burning a PIN
+or PUK try where OpenSC's own mature, widely-used PIV driver already
+gets both right.
+
+Tested against a physical YubiKey 5C NFC (firmware 5.8.0), not
+simulated: slot `9d` (KEY_MANAGEMENT), confirmed empty before use.
+`RealPivCard.ecdh()`'s output was independently verified correct —
+computed the same ECDH via `node:crypto` using the ephemeral private key
+and the card's exported public key, and the two matched byte for byte —
+genuine proof the on-card operation is correct, not merely that the code
+runs without error. `packages/securelib-piv/src/index.test.ts` then
+drove a full `YubikeyPivProvider` wrap()/unwrap() round trip through the
+real card via its real `RealPivCard`, and it passed. This test is
+`describe.skipIf`-gated on an explicit `SECUREGIT_PIV_TEST_PIN`
+environment variable — never auto-detected, since every real run submits
+a genuine PIN to genuine hardware with a genuine, limited retry counter;
+CI has no such variable set and always skips it.
+
+OpenSC's PIV slot-to-PKCS#11-object-id mapping (`9a`→`01`, `9c`→`02`,
+`9d`→`03`, `9e`→`04`) is OpenSC's own established convention, not this
+project's invention — empirically confirmed for `9d` specifically
+against the real card (`pkcs11-tool --list-objects --type privkey`
+reported `ID: 03` for a key generated in slot `9d`).
 
 ### `yubikey-fido2` — any FIDO2 authenticator, via `hmac-secret`
 
@@ -586,8 +622,8 @@ of `packages/securelib` and `packages/securegit` under the same glob:
 packages/
   securelib/           @trinoris/securelib        — core, zero deps: passphrase-file AND kms-envelope live here
   securegit/            @trinoris/securegit         — CLI, depends on securelib
-  securelib-piv/        @trinoris/securelib-piv     — yubikey-piv, real PC/SC dependency
-  securelib-fido2/      @trinoris/securelib-fido2   — yubikey-fido2, real CTAP2/HID dependency
+  securelib-piv/        @trinoris/securelib-piv     — yubikey-piv — BUILT, verified against real hardware
+  securelib-fido2/      @trinoris/securelib-fido2   — yubikey-fido2, real CTAP2/HID dependency — not yet built
 ```
 
 Only two companion packages, not three. `kms-envelope`'s own design
@@ -727,6 +763,9 @@ packages on disk, not a mock.
 | `YubikeyPivProvider` passes the full conformance suite against a `FakePivCard` | `src/provider.conformance.test.ts` | — | ✅ |
 | `YubikeyPivProvider.unwrap` throws a specific, actionable error when `ctx.interactive` is `false` | `src/piv.test.ts` | — | ✅ |
 | `YubikeyPivProvider.wrap` never calls `PivCard.ecdh()` — only reads the card's public key | `src/piv.test.ts` | — | ✅ |
+| `RealPivCard.ecdh()`'s output matches an independent `node:crypto` ECDH computation, against a real card | manual (documented in "Concrete designs" above) | — | ✅ — real YubiKey 5C NFC, verified once during development |
+| A full `YubikeyPivProvider` wrap()/unwrap() round trip via `RealPivCard` against real hardware | `packages/securelib-piv/src/index.test.ts` | — | ✅ — `describe.skipIf`, gated on `SECUREGIT_PIV_TEST_PIN`, never run automatically |
+| `securelib-piv` declares zero npm runtime dependencies and only shells out to `ykman`/`pkcs11-tool` | `packages/securelib-piv/src/package.test.ts` | — | ✅ |
 | `YubikeyFido2Provider` passes the full conformance suite against a `FakeFido2Authenticator` | `src/provider.conformance.test.ts` | — | ✅ |
 | `YubikeyFido2Provider.unwrap` throws a specific, actionable error when `ctx.interactive` is `false` | `src/fido2.test.ts` | — | ✅ |
 | `loadProvider('passphrase-file', ...)` resolves to a real, working provider — no dynamic `import()` needed | `src/registry.test.ts` | — | ✅ |

@@ -1,0 +1,52 @@
+{
+  "name": "@trinoris/securelib-piv",
+  "version": "0.1.0",
+  "description": "Real PC/SC PivCard transport for @trinoris/securelib's yubikey-piv KeyProvider (specs/securegit/06-key-provider-port.md) -- a YubiKey or any PIV smartcard's own key-management slot.",
+  "type": "module",
+  "repository": {
+    "url": "https://github.com/trinoris/secure.git",
+    "directory": "packages/securelib-piv"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "piv",
+    "yubikey",
+    "smartcard",
+    "pkcs11"
+  ],
+  "author": "TRINORIS",
+  "license": "MIT",
+  "peerDependencies": {
+    "@trinoris/securelib": "^0.1.0"
+  },
+  "devDependencies": {
+    "@trinoris/securelib": "^0.1.0",
+    "@types/node": "^26.4.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
