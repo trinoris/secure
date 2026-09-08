@@ -1217,7 +1217,84 @@ describe('key add-provider / key remove-provider / key list / key list-recipient
     await h.run(['init']);
     await h.run(['unlock']);
     expect(await h.run(['key', 'add-provider', 'tpm2'])).toBe(4);
+    expect(h.stderrText()).toContain('passphrase-file, yubikey-piv, yubikey-fido2');
   });
+
+  it('add-provider yubikey-piv requires --slot, before ever touching hardware', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    expect(await h.run(['key', 'add-provider', 'yubikey-piv'])).toBe(4);
+    expect(h.stderrText()).toContain('--slot');
+  });
+
+  /**
+   * Real, physical hardware only — never auto-detected. Requires
+   * SECUREGIT_PIV_TEST_PIN explicitly (same opt-in discipline as
+   * @trinoris/securelib-piv's own hardware-gated suite). Slot 9d's touch
+   * policy was set to `never` when this test key was created (see
+   * ARCHITECTURE.md's — now docs/securegit/01-architecture.md's — Phase 4
+   * history), so unlike FIDO2, this genuinely runs unattended: no physical
+   * touch to wait for, only the PIN. Proves the full CLI wiring, not just
+   * the library layer already covered by securelib-piv's own tests: `key
+   * add-provider yubikey-piv` really adds a usable slot, and a *later*
+   * `unlock` — with a deliberately wrong passphrase, so success can only
+   * come from the YubiKey — really succeeds via it.
+   */
+  describe.skipIf(!process.env.SECUREGIT_PIV_TEST_PIN)('add-provider yubikey-piv against real hardware', () => {
+    it('adds a real YubiKey PIV provider, and a later unlock succeeds via it alone', async () => {
+      const h = harness();
+      await h.run(['init']);
+      await h.run(['unlock']);
+
+      const slot = process.env.SECUREGIT_PIV_TEST_SLOT ?? '9d';
+      const pin = process.env.SECUREGIT_PIV_TEST_PIN!;
+      expect(
+        await h.run(['key', 'add-provider', 'yubikey-piv', '--slot', slot], {
+          env: { SECUREGIT_PIV_PIN: pin },
+        }),
+      ).toBe(0);
+
+      expect(await h.run(['lock'])).toBe(0);
+      expect(
+        await h.run(['unlock'], {
+          env: { SECUREGIT_PASSPHRASE: 'deliberately wrong, so only the YubiKey can succeed', SECUREGIT_PIV_PIN: pin },
+        }),
+      ).toBe(0);
+    });
+  });
+
+  /**
+   * Real, physical hardware only — never auto-detected, and (unlike PIV
+   * above) never run automatically even with the gate set: FIDO2's touch
+   * requirement can't be disabled the way PIV's touch policy could, so
+   * every real invocation here blocks on a genuine physical touch a
+   * non-interactive process can't react to in time. Needs THREE touches
+   * total: add-provider's own init()+wrap() (MakeCredential, then
+   * GetAssertion) is two, the proving unlock's unwrap() (another
+   * GetAssertion) is the third. Requires SECUREGIT_FIDO2_HARDWARE_TEST=1
+   * explicitly, same opt-in discipline as @trinoris/securelib-fido2's own
+   * suite — run this one via `! ... npx vitest run ...` yourself.
+   */
+  describe.skipIf(process.env.SECUREGIT_FIDO2_HARDWARE_TEST !== '1')(
+    'add-provider yubikey-fido2 against real hardware',
+    () => {
+      it('adds a real FIDO2 provider, and a later unlock succeeds via it alone (needs three touches)', async () => {
+        const h = harness();
+        await h.run(['init']);
+        await h.run(['unlock']);
+
+        expect(await h.run(['key', 'add-provider', 'yubikey-fido2'], { env: {} })).toBe(0);
+
+        expect(await h.run(['lock'])).toBe(0);
+        expect(
+          await h.run(['unlock'], {
+            env: { SECUREGIT_PASSPHRASE: 'deliberately wrong, so only the authenticator can succeed' },
+          }),
+        ).toBe(0);
+      });
+    },
+  );
 
   it('remove-provider deletes the named slot — the removed passphrase stops working, the remaining one still does', async () => {
     const h = harness();

@@ -60,8 +60,20 @@ real cloud account) remain genuinely unproven, not unbuilt.
 
 `key add-provider`/`remove-provider`/`list` ([10](10-cli-contract.md)) are
 implemented as `addProvider()`/`removeProvider()` in `src/keyring.ts`.
-With only `passphrase-file` as a real type, "add a provider" today
-honestly means "add a second, independent passphrase" — `PassphraseFileProvider`'s
+Three real types are wired into `key add-provider` now: `passphrase-file`,
+`yubikey-piv --slot <slot>`, and `yubikey-fido2 [--device <path>]` — the
+latter two resolved via `@trinoris/securelib`'s `loadProvider()` (the same
+dynamic-`import()` mechanism "Loading a provider package without paying
+for it" describes), confirmed against a real YubiKey: `key add-provider
+yubikey-piv --slot 9d` really adds a usable slot, and a later `unlock` —
+with a deliberately wrong passphrase, so success can only come from the
+key — really succeeds via it alone (`cli.test.ts`'s
+"add-provider yubikey-piv against real hardware", `describe.skipIf`-gated
+on `SECUREGIT_PIV_TEST_PIN`). `kms-envelope` isn't wired into the CLI
+yet — its config shape (a `KmsBackend`, which itself needs credentials
+resolved per cloud) doesn't reduce to the same `--slot <value>` shape the
+other two do, a real design question not yet settled, not just missing
+plumbing. `PassphraseFileProvider`'s
 constructor gained an optional third `id` argument for exactly this (it
 was `readonly id = 'passphrase-file'`, a class-level constant; two
 instances sharing that id would silently shadow one during unlock, since
@@ -92,16 +104,32 @@ passphrase from stdin instead.
 `cmdUnlock` itself needed a small but real change to make any of this
 usable: it used to construct exactly one `PassphraseFileProvider`, always
 at the unlabeled default id, so a labeled backup provider's slot could
-never be reached no matter what passphrase was entered. A new shared
+never be reached no matter what passphrase was entered. A
 `passphraseProvidersFor()` helper in `src/cli.ts` enumerates every
 passphrase-file-shaped provider id actually present in the keyring and
 tries the entered passphrase against all of them — the caller never says
 in advance which id their passphrase belongs to, and only the one it
 actually fits ever succeeds. `keySourceFromPassphraseEnv()`
-([07](07-unlock-session.md)) and `rewrapOutdatedGenerations()` (below) now
-share this same helper, so a second provider is honored consistently
-everywhere a passphrase authenticates against the local keyring, not just
-at `unlock`.
+([07](07-unlock-session.md)) and `rewrapOutdatedGenerations()` (below) use
+this one directly — both are inherently passphrase-only contexts
+(the former is a non-interactive, `SECUREGIT_PASSPHRASE`-only filter-time
+path where `ctx.interactive` is always `false`, so a hardware provider
+would only ever self-reject; the latter is scrypt-cost hygiene, meaningless
+for a provider with no scrypt state) — so extending either with hardware
+providers would add real subprocess calls for zero possible benefit.
+
+`cmdUnlock` itself now uses a broader `providersFor()` instead, which
+starts from the same passphrase-provider enumeration and *also* constructs
+a `yubikey-piv`/`yubikey-fido2` provider via `loadProvider()` whenever
+that id appears anywhere in the keyring. Both are genuinely lazy about the
+credential they need: a PIN (`resolvePin()`, the same `SECUREGIT_PIV_PIN`-
+then-stdin shape as `resolvePassphrase()`) or a physical touch is only
+ever requested if `unlockKeyring()`'s own trial loop actually reaches that
+provider's `unwrap()`, never merely because `providersFor()` ran. A
+`loadProvider()` failure (the companion package genuinely not installed)
+degrades to a warning and that one provider being skipped, not a thrown
+error — a keyring that also has a working passphrase must still be
+unlockable.
 
 `src/provider.conformance.test.ts` is the contract suite this document
 promises: `describe.each` over a `{ name, makeProvider }` registration list
@@ -825,6 +853,9 @@ packages on disk, not a mock.
 | `removeProvider()` does not refuse when another provider remains | `src/keyring.test.ts` | — | ✅ |
 | `removeProvider()` throws when the id was never present | `src/keyring.test.ts` | — | ✅ |
 | `key unlock` tries every passphrase-file-shaped provider id present, not only the unlabeled default | `src/cli.test.ts` | — | ✅ |
+| `key add-provider yubikey-piv` requires `--slot`, before ever touching hardware | `src/cli.test.ts` | — | ✅ |
+| `key add-provider yubikey-piv --slot <slot>` adds a real, usable slot, and a later `unlock` (deliberately wrong passphrase) succeeds via the YubiKey alone | `src/cli.test.ts` | — | ✅ — `describe.skipIf`, gated on `SECUREGIT_PIV_TEST_PIN`, real hardware, runs unattended (this test key's touch policy is `never`) |
+| `key add-provider yubikey-fido2` adds a real, usable slot, and a later `unlock` (deliberately wrong passphrase) succeeds via the authenticator alone | `src/cli.test.ts` | — | written, `describe.skipIf` gated on `SECUREGIT_FIDO2_HARDWARE_TEST=1` — needs three real touches, only runnable interactively; not yet confirmed passing |
 | A custodial-only repository is a `verify` finding | `src/verify.test.ts` | — | ✅ |
 | Provider never receives a path or file content | `src/provider.conformance.test.ts` | — | ✅ |
 | `KmsEnvelopeProvider` passes the full conformance suite against a `FakeKmsBackend` | `src/provider.conformance.test.ts` | — | ✅ |

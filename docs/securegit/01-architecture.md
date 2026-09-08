@@ -65,10 +65,14 @@ for no benefit.
   package**, rather than a workspace link — the point `securegit`'s own
   `package.json` gains a real, external dependency. Depends on choices
   (registry, versioning cadence) worth deciding when actually reached.
-- **Wiring the built, hardware-verified providers (YubiKey PIV/FIDO2,
-  cloud KMS) into `securegit`'s own CLI.** They exist and work at the
-  library level today; `securegit key add-provider` only knows about
-  `passphrase-file` so far — see
+- **Wiring `kms-envelope` (cloud KMS) into `securegit`'s own CLI.**
+  `key add-provider yubikey-piv --slot <slot>` and `key add-provider
+  yubikey-fido2` are real now, confirmed against actual hardware — `key
+  add-provider` really adds a usable slot, and a later `securegit unlock`
+  really succeeds through it. `kms-envelope` isn't wired yet: its config
+  (a `KmsBackend`, itself needing per-cloud credentials resolved) doesn't
+  reduce to the same `--slot <value>` shape the other two do — a real
+  design question, not just missing plumbing. See
   [02-faq.md](02-faq.md#what-kind-of-keystore-does-it-support-can-i-use-a-tpm-smartcard-or-my-oss-keychain).
 - **A second real consumer of `securelib`** for something other than
   Git, proving the extraction was worth doing rather than merely

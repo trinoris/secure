@@ -49,43 +49,44 @@ securegit unlock
 
 ## What kind of keystore does it support? Can I use a TPM, smartcard, or my OS's keychain?
 
-**What you can actually turn on today, via the `securegit` command
-itself: one, a passphrase.** Your key is stored locally, locked behind a
-passphrase only you know, using the same kind of slow, deliberately
-expensive scrambling banks and password managers use to make a stolen
-copy useless without your actual passphrase (technically: `scrypt` to
-turn your passphrase into a lock, then AES-256-GCM to actually lock the
-key with it).
+**Two, today, both usable right now via the `securegit` command
+itself:**
 
-**Three more are built and tested, but not yet reachable from the
-`securegit` command line** — real, working code, verified against real
-hardware and real cryptography, just not wired into `securegit key
-add-provider` yet:
+- **A passphrase** (the default). Your key is stored locally, locked
+  behind a passphrase only you know, using the same kind of slow,
+  deliberately expensive scrambling banks and password managers use to
+  make a stolen copy useless without your actual passphrase (technically:
+  `scrypt` to turn your passphrase into a lock, then AES-256-GCM to
+  actually lock the key with it).
+- **A YubiKey or similar hardware security key** — `securegit key
+  add-provider yubikey-piv --slot <slot>` (the key's smartcard mode) or
+  `securegit key add-provider yubikey-fido2` (its authentication mode).
+  Either way, the actual secret material never leaves the physical
+  device — you plug it in and touch it, the device does the unlocking
+  math itself, and nothing your computer can read ever includes the raw
+  key. Confirmed against a real YubiKey: adding it this way really
+  produces a usable slot, and a later `securegit unlock` really succeeds
+  through the device alone, even with the wrong passphrase typed.
 
-- **A YubiKey or similar hardware security key** — using either the
-  key's smartcard mode (PIV) or its authentication mode (FIDO2). Either
-  way, the actual secret material never leaves the physical device — you
-  plug it in and touch it, the device does the unlocking math itself,
-  and nothing your computer can read ever includes the raw key. Built
-  and verified against a real YubiKey: the device's own math was checked
-  against an independent computation and matched exactly, and a full
-  lock/unlock cycle through the real hardware passed.
+**One more is built and tested, but not yet reachable from the
+`securegit` command line:**
+
 - **A cloud key vault (AWS KMS, Google Cloud KMS, Azure Key Vault)** —
   with an important limit, on purpose: this can never be your *only* way
   in. A cloud provider's key vault is still something that provider
   could theoretically be compelled to unlock, so it's only ever allowed
   as one option among several — useful as a company-wide "break glass"
   backup, never as the single point of trust the whole point of this
-  tool is to avoid. Built; not yet tested against a real cloud account
-  (only against realistic simulations), since that needs real cloud
-  credentials nobody's plugged in yet.
+  tool is to avoid. The code is built and tested, but not yet against a
+  real cloud account (only against realistic simulations, since that
+  needs real cloud credentials nobody's plugged in yet), and not yet
+  wired into `key add-provider` — its configuration doesn't reduce to a
+  simple `--slot <value>` the way the YubiKey did, so wiring it in means
+  settling a real design question, not just plumbing.
 
 **Still just a plan, no code yet:** a TPM chip, or your operating
-system's own keychain (Windows Credential Manager, macOS Keychain).
-
-Turning any of the three built-but-not-wired-up options into something
-you can actually select from `securegit key add-provider` is the next
-step — track it in [01-architecture.md](01-architecture.md).
+system's own keychain (Windows Credential Manager, macOS Keychain). What's
+left overall: [01-architecture.md](01-architecture.md#whats-still-ahead).
 
 Worth keeping separate: this is about what protects *your own*
 computer's copy of the key. Sharing that key with a teammate is a

@@ -38,6 +38,7 @@ import {
   type KeyringFile,
 } from '@trinoris/securelib/keyring';
 import { PassphraseFileProvider, ProviderError, type KeyProvider } from '@trinoris/securelib/provider';
+import { loadProvider } from '@trinoris/securelib/registry';
 import {
   keySourceFromSessionKey,
   lockSession,
@@ -150,6 +151,20 @@ function resolvePassphrase(io: CliIO): string {
   return io.stdin.toString('utf8').replace(/\r?\n$/, '');
 }
 
+/**
+ * A YubiKey PIV PIN, same shape as `resolvePassphrase` — `SECUREGIT_PIV_PIN`
+ * first, stdin otherwise. Deliberately its own function, not a shared
+ * "resolve any secret" helper: the two are conceptually different secrets
+ * (one unlocks a local file, the other authenticates to hardware), and
+ * keeping them separate means a future third kind of secret doesn't have to
+ * shoehorn itself into a generic name.
+ */
+function resolvePin(io: CliIO): string {
+  const fromEnv = io.env.SECUREGIT_PIV_PIN;
+  if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
+  return io.stdin.toString('utf8').replace(/\r?\n$/, '');
+}
+
 function sessionPathFor(config: RepoConfig, io: CliIO): string {
   return resolveSessionPath(config.repoId, io.env, io.home);
 }
@@ -175,13 +190,16 @@ type Loaded = { ok: true; config: RepoConfig; keys: KeySource } | { ok: false; c
  * "once" is actually achievable without writing a session to disk.
  */
 /**
- * Every passphrase-file-shaped provider id actually present in `file` —
- * the unlabeled default `init` always creates, plus any `key add-provider
- * --label` slots — each given the same `passphrase`. A caller trying one
- * passphrase against a keyring never says in advance which id it belongs
- * to; `unlockKeyring()` tries each generation's slot against the provider
- * whose id matches, so only the one whose passphrase actually fits ever
- * succeeds.
+ * Every passphrase-file-shaped provider id actually present in `file`,
+ * each given the same `passphrase` — no hardware providers, deliberately:
+ * this backs only `keySourceFromPassphraseEnv`, whose whole contract is
+ * `SECUREGIT_PASSPHRASE` as a *non-interactive* filter-time source
+ * (`ctx.interactive: false` throughout). `yubikey-piv`/`yubikey-fido2`
+ * would always self-reject in that context anyway (both check
+ * `ctx.interactive` before touching hardware), so including them here
+ * would add real subprocess calls for zero possible benefit. `providersFor()`
+ * below is the hardware-aware version, used only by genuinely interactive
+ * commands.
  */
 function passphraseProvidersFor(file: KeyringFile, passphrase: string): KeyProvider[] {
   const ids = new Set<string>();
@@ -194,6 +212,68 @@ function passphraseProvidersFor(file: KeyringFile, passphrase: string): KeyProvi
   }
   if (ids.size === 0) ids.add('passphrase-file');
   return [...ids].map((id) => new PassphraseFileProvider(() => passphrase, undefined, id));
+}
+
+/**
+ * Every provider actually configured on `file`'s keyring, one instance per
+ * distinct provider id found across every generation's wrapped slots.
+ * `unlockKeyring()` tries every slot against every provider given here and
+ * keeps whichever succeed (06-key-provider-port.md), so a caller never has
+ * to say in advance which one will actually work.
+ *
+ * Every passphrase-file-shaped id (the unlabeled default `init` always
+ * creates, plus any `key add-provider --label` slots) gets a
+ * `PassphraseFileProvider` sharing the same already-resolved `passphrase`
+ * — harmless even against a hardware-only keyring, since one that never
+ * matches any slot just fails its own attempts and `unlockKeyring()`
+ * continues past it. `yubikey-piv`'s PIN and `yubikey-fido2`'s touch
+ * prompt are genuinely lazy instead, unlike the passphrase: `resolvePin()`
+ * (or the real hardware call) only happens if `unlockKeyring()` actually
+ * reaches that provider's `unwrap()`, never merely because this function
+ * ran. `loadProvider()` failing (the companion package genuinely not
+ * installed) degrades to a warning and that one provider being skipped,
+ * not a thrown error — a keyring that also has a working passphrase or
+ * other provider must still be unlockable.
+ */
+async function providersFor(file: KeyringFile, io: CliIO, passphrase: string): Promise<KeyProvider[]> {
+  const passphraseIds = new Set<string>();
+  let hasPiv = false;
+  let hasFido2 = false;
+  for (const gen of file.generations) {
+    for (const slot of gen.wrapped) {
+      if (slot.provider === 'passphrase-file' || slot.provider.startsWith('passphrase-file:')) {
+        passphraseIds.add(slot.provider);
+      } else if (slot.provider === 'yubikey-piv') {
+        hasPiv = true;
+      } else if (slot.provider === 'yubikey-fido2') {
+        hasFido2 = true;
+      }
+    }
+  }
+  if (passphraseIds.size === 0) passphraseIds.add('passphrase-file');
+
+  const providers: KeyProvider[] = [...passphraseIds].map(
+    (id) => new PassphraseFileProvider(() => passphrase, undefined, id),
+  );
+
+  if (hasPiv) {
+    // `slot` only matters for init()/wrap() (creating a *new* generation);
+    // unwrap() against an existing one reads the slot from the keyring's
+    // own persisted state, never this constructor argument.
+    try {
+      providers.push(await loadProvider('yubikey-piv', { slot: '9d', pin: () => resolvePin(io) }));
+    } catch (e) {
+      io.stderr((e as Error).message);
+    }
+  }
+  if (hasFido2) {
+    try {
+      providers.push(await loadProvider('yubikey-fido2', {}));
+    } catch (e) {
+      io.stderr((e as Error).message);
+    }
+  }
+  return providers;
 }
 
 async function keySourceFromPassphraseEnv(
@@ -547,9 +627,10 @@ async function cmdUnlock(args: string[], io: CliIO): Promise<number> {
   }
 
   const passphrase = resolvePassphrase(io);
+  const candidates = await providersFor(file, io, passphrase);
   let keys;
   try {
-    keys = await unlockKeyring(file, passphraseProvidersFor(file, passphrase), {
+    keys = await unlockKeyring(file, candidates, {
       warn: io.stderr,
       expectedRepoId: config.repoId,
     });
@@ -1160,29 +1241,31 @@ async function cmdKeyImportRecovery(args: string[], io: CliIO): Promise<number> 
 }
 
 /**
- * `key add-provider <type> [--label <label>]` (06-key-provider-port.md).
- * `passphrase-file` is the only type that exists — the point of this
- * command today is a *second, independent* passphrase-file secret, not a
- * genuinely different kind of provider, since hardware providers remain
- * unimplemented behind the same port. `--label` becomes part of the new
- * provider's id (`passphrase-file:<label>`); omitted, it collides with the
- * unlabeled `passphrase-file` id `init` always creates, and `addProvider()`
- * refuses that collision with a clear message rather than this command
+ * `key add-provider <type> [options]` (06-key-provider-port.md).
+ *
+ * `passphrase-file [--label <label>]` — a *second, independent* passphrase
+ * secret. `--label` becomes part of the new provider's id
+ * (`passphrase-file:<label>`); omitted, it collides with the unlabeled
+ * `passphrase-file` id `init` always creates, and `addProvider()` refuses
+ * that collision with a clear message rather than this command
  * pre-checking it separately.
+ *
+ * `yubikey-piv --slot <slot>` / `yubikey-fido2 [--device <path>]` — the
+ * two real hardware providers, resolved via `@trinoris/securelib`'s
+ * `loadProvider()` (a dynamic `import()` of the companion package by
+ * naming convention — `npm install @trinoris/securelib-piv`/`-fido2` if
+ * it isn't already, surfaced as this command's own error if not). Neither
+ * takes `--label`: this command can add at most one of each today,
+ * matching the port's own id scheme (`yubikey-piv`/`yubikey-fido2`, no
+ * per-device suffix yet) — multiple hardware keys on one repository is a
+ * real, separate feature, not built here.
  */
 async function cmdKeyAddProvider(args: string[], io: CliIO): Promise<number> {
   const type = args.find((a) => !a.startsWith('--'));
   if (!type) {
-    io.stderr('usage: securegit key add-provider <type> [--label <label>]');
+    io.stderr('usage: securegit key add-provider <passphrase-file|yubikey-piv|yubikey-fido2> [options]');
     return EXIT_USAGE;
   }
-  if (type !== 'passphrase-file') {
-    io.stderr(`securegit: unknown provider type '${type}'\n  supported: passphrase-file`);
-    return EXIT_USAGE;
-  }
-  const labelIdx = args.indexOf('--label');
-  const label = labelIdx !== -1 ? args[labelIdx + 1] : undefined;
-  const id = label ? `passphrase-file:${label}` : 'passphrase-file';
 
   const loaded = await loadKeys(io);
   if (!loaded.ok) return loaded.code;
@@ -1200,8 +1283,49 @@ async function cmdKeyAddProvider(args: string[], io: CliIO): Promise<number> {
     return EXIT_MISCONFIGURED;
   }
 
-  const passphrase = resolvePassphrase(io);
-  const provider = new PassphraseFileProvider(() => passphrase, undefined, id);
+  let provider: KeyProvider;
+  let id: string;
+  let successAction: string;
+
+  if (type === 'passphrase-file') {
+    const labelIdx = args.indexOf('--label');
+    const label = labelIdx !== -1 ? args[labelIdx + 1] : undefined;
+    id = label ? `passphrase-file:${label}` : 'passphrase-file';
+    const passphrase = resolvePassphrase(io);
+    provider = new PassphraseFileProvider(() => passphrase, undefined, id);
+    successAction = 'share the new passphrase with whoever should hold it';
+  } else if (type === 'yubikey-piv') {
+    const slotIdx = args.indexOf('--slot');
+    const slot = slotIdx !== -1 ? args[slotIdx + 1] : undefined;
+    if (!slot) {
+      io.stderr('usage: securegit key add-provider yubikey-piv --slot <slot>');
+      return EXIT_USAGE;
+    }
+    id = 'yubikey-piv';
+    try {
+      provider = await loadProvider('yubikey-piv', { slot, pin: () => resolvePin(io) });
+    } catch (e) {
+      io.stderr((e as Error).message);
+      return EXIT_MISCONFIGURED;
+    }
+    successAction = 'this YubiKey can now unlock the repository — run `securegit unlock` to try it';
+  } else if (type === 'yubikey-fido2') {
+    const deviceIdx = args.indexOf('--device');
+    const device = deviceIdx !== -1 ? args[deviceIdx + 1] : undefined;
+    id = 'yubikey-fido2';
+    try {
+      provider = await loadProvider('yubikey-fido2', device !== undefined ? { device } : {});
+    } catch (e) {
+      io.stderr((e as Error).message);
+      return EXIT_MISCONFIGURED;
+    }
+    successAction = 'this authenticator can now unlock the repository — run `securegit unlock` to try it';
+  } else {
+    io.stderr(
+      `securegit: unknown provider type '${type}'\n  supported: passphrase-file, yubikey-piv, yubikey-fido2`,
+    );
+    return EXIT_USAGE;
+  }
 
   let updated;
   try {
@@ -1212,10 +1336,7 @@ async function cmdKeyAddProvider(args: string[], io: CliIO): Promise<number> {
   }
 
   await writeKeyringFile(keyringPath, updated);
-  io.info(
-    `securegit: added provider '${id}'\n` +
-      `  action: share the new passphrase with whoever should hold it`,
-  );
+  io.info(`securegit: added provider '${id}'\n  action: ${successAction}`);
   return EXIT_OK;
 }
 

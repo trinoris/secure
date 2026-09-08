@@ -39,29 +39,32 @@ written ever becomes unreadable to you.
 The master key is stored on your computer, but never in plain,
 readable form — it's locked ("wrapped," in the technical spec) behind
 something only you can produce. Which "something" is swappable — that's
-what this project calls a **provider**. Right now, one is available
-from the `securegit` command line itself:
+what this project calls a **provider**. Two are available from the
+`securegit` command line itself, right now:
 
-- **A passphrase** (today's default, and the only one `securegit key
-  add-provider` currently understands). Your passphrase itself is never
+- **A passphrase** (the default). Your passphrase itself is never
   stored anywhere — instead, it's run through a slow, deliberately
   expensive scrambling process (the same kind banks and password
-  managers use) to produce a lock, and the master key is sealed behind
-  that lock. Guessing your way in without the real passphrase is
-  designed to be prohibitively slow, even for someone who steals the
-  locked file itself.
+  managers use) to produce an encryption key, and the master key is
+  sealed behind that lock. Guessing your way in without the real
+  passphrase is designed to be prohibitively slow, even for someone who
+  steals the locked file itself.
+- **A YubiKey or similar hardware security key**
+  (`securegit key add-provider yubikey-piv --slot <slot>` or
+  `yubikey-fido2`). The master key gets locked using a calculation the
+  *physical device itself* performs — you plug it in and touch it, and
+  the secret math never happens anywhere your computer could read it.
+  Even if your whole computer were compromised, the key material on the
+  device stays out of reach without the device physically present and
+  touched. Confirmed against a real YubiKey: adding it this way
+  produces a genuinely usable slot, and unlocking through it afterward
+  actually works, even with the wrong passphrase typed.
 
-Two more are real, working, tested code — just not yet reachable from
-the `securegit` command itself (see
+One more is real, working, tested code — just not yet reachable from the
+`securegit` command itself (see
 [02-faq.md](02-faq.md#what-kind-of-keystore-does-it-support-can-i-use-a-tpm-smartcard-or-my-oss-keychain)
 for exactly what "not yet reachable" means):
 
-- **A YubiKey or similar hardware security key.** The master key gets
-  locked using a calculation the *physical device itself* performs —
-  you plug it in and touch it, and the secret math never happens
-  anywhere your computer could read it. Even if your whole computer were
-  compromised, the key material on the device stays out of reach without
-  the device physically present and touched.
 - **A cloud key vault** (AWS, Google Cloud, or Azure's key-management
   service). The vault locks and unlocks your master key on request, over
   the network. This one comes with a real, deliberate limit: it can
