@@ -104,7 +104,7 @@ mechanism the shorter local runs were too brief to hit:
   recipients landed (PI4) — the exact expected variance of a 30%-per-round
   dice roll, not a contradiction. Either way, this is the concrete
   demonstration of the table's own point — the signing check that fully
-  stops chaos-5 under this exact mode (`CHAOS.md`'s "0 violations"
+  stops chaos-5 under this exact mode (`03-chaos-sandbox.md`'s "0 violations"
   finding) has nothing to say about a signer it already trusts.
 - **`pr-gated`+`advance` (and `+basic`) — the self-poisoning correction.**
   The local 90s runs showed 0 plaintext violations, which this document
@@ -158,7 +158,7 @@ attacks. The result is a genuinely new finding, not a regression: `master`
 stays clean (the review gate's actual, narrower guarantee), but the
 project's own broader stated invariant — "no plaintext ever crossed the
 boundary... everywhere in reachable history"
-([../CHAOS.md](../../CHAOS.md)) — does not hold under any workflow once an
+([../../docs/securegit/03-chaos-sandbox.md](../../docs/securegit/03-chaos-sandbox.md)) — does not hold under any workflow once an
 attacker also behaves like an ordinary collaborator on its own branch.
 This is arguably the most realistic and most severe of the four PI
 attacks precisely because it doesn't need PI1 to be caught at merge time

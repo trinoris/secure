@@ -316,7 +316,7 @@ async function loadKeys(io: CliIO): Promise<Loaded> {
 
 /**
  * `initConfig()` itself (`@trinoris/securelib`) no longer checks this —
- * ARCHITECTURE.md's Phase 2: a git-agnostic library has no business
+ * docs/securegit/01-architecture.md's Phase 2: a git-agnostic library has no business
  * assuming its caller is a git repository. `securegit` is the consumer
  * that actually requires one, so the check lives here instead.
  */

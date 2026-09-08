@@ -29,7 +29,7 @@ import { join } from 'node:path';
 import { git, runBinary, sleep } from '../lib/proc.mjs';
 import { say } from '../lib/log.mjs';
 import { waitFor } from '../lib/wait-for.mjs';
-// envelope.ts moved to @trinoris/securelib (ARCHITECTURE.md).
+// envelope.ts moved to @trinoris/securelib (docs/securegit/01-architecture.md).
 import { looksLikeEnvelope } from '/app/node_modules/@trinoris/securelib/dist/envelope.js';
 
 const REMOTE_URL = process.env.REMOTE_URL ?? 'git://remote/repo.git';

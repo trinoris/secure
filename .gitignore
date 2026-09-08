@@ -5,7 +5,7 @@ reports/
 .DS_Store
 *.recovery.txt
 # Build output was committed under the old single-package layout; since
-# the @trinoris/securelib extraction (ARCHITECTURE.md) it's per-package
+# the @trinoris/securelib extraction (docs/securegit/01-architecture.md) it's per-package
 # (packages/*/dist/), and nothing in CI or chaos/Dockerfile relies on it
 # being committed — both always run a fresh `npm run build` from source.
 dist/

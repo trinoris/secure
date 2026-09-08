@@ -7,7 +7,7 @@ hierarchy, pluggable `KeyProvider` port, multi-recipient sharing, and
 offline recovery that power [`@trinoris/securegit`](https://github.com/trinoris/secure/tree/master/packages/securegit).
 Extracted so the same primitives can back other clients that need the
 same guarantees but aren't Git — see
-[ARCHITECTURE.md](https://github.com/trinoris/secure/blob/master/ARCHITECTURE.md).
+[docs/securegit/01-architecture.md](https://github.com/trinoris/secure/blob/master/docs/securegit/01-architecture.md).
 
 Depends on nothing but `node:crypto` and `node:fs` — zero runtime
 dependencies is a stated security property, not an accident (see the

@@ -7,7 +7,7 @@
 // wiring between /chaos and /app.
 //
 // session.ts/config.ts/identity.ts all moved to @trinoris/securelib
-// (ARCHITECTURE.md) — the Dockerfile now copies that package's own dist/
+// (docs/securegit/01-architecture.md) — the Dockerfile now copies that package's own dist/
 // to /app/node_modules/@trinoris/securelib/dist, mirroring where the
 // workspace symlink puts it during the build stage.
 

@@ -79,7 +79,7 @@ what leaked — mandatory disclosure.** And unlike almost every other
 control on this list, it works *before* the first plaintext byte ever
 leaves the workstation, not after something has already gone wrong.
 
-None of this is only asserted — [CHAOS.md](CHAOS.md) is a live,
+None of this is only asserted — [docs/securegit/03-chaos-sandbox.md](docs/securegit/03-chaos-sandbox.md) is a live,
 adversarial simulation that measures it against real Git, real attacks,
 and three real-world code-review workflows compared side by side, with
 results published from an actual run every night.
@@ -137,15 +137,21 @@ specs/securegit/README.md#why-this-and-not-git-crypt--sops--age).
   chaos testing: process kills mid-write, concurrent races, a multi-actor
   Docker sandbox with adversarial agents, and the match-replay viewer that
   renders a run as a game (published nightly — see below).
-- **[CHAOS.md](CHAOS.md)** — what the chaos sandbox actually proves, in
-  plain terms: the three-workflow x signing-tier comparison, what real
-  runs found, and how to watch it live or run it yourself.
-- **[FAQ.md](FAQ.md)** — common questions answered in plain terms, e.g.
-  what an RMK is and why there's no "owner" role in the key model.
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — proposed, not yet executed:
-  splitting the git-agnostic crypto core out into `@trinoris/securelib`,
-  a shared library that future hardware-key providers and a future
-  document-focused sibling project could both depend on.
+- **[docs/securegit/01-architecture.md](docs/securegit/01-architecture.md)**
+  — how this repository's packages are organized and why: the
+  git-agnostic `@trinoris/securelib` core, `@trinoris/securegit` as a
+  consumer of it, and the hardware-verified `@trinoris/securelib-piv`/
+  `-fido2` provider packages.
+- **[docs/securegit/02-faq.md](docs/securegit/02-faq.md)** — common
+  questions answered in plain terms, e.g. what the master key is and why
+  there's no "owner" role in the key model.
+- **[docs/securegit/03-chaos-sandbox.md](docs/securegit/03-chaos-sandbox.md)**
+  — what the chaos sandbox actually proves, in plain terms: the
+  three-workflow x signing-tier comparison, what real runs found, and how
+  to watch it live or run it yourself.
+- **[docs/securegit/04-keys-usage.md](docs/securegit/04-keys-usage.md)**
+  — every kind of "key" this project talks about, in plain terms: what
+  each one is, where it lives, and what protects it.
 
 ## Chaos sandbox
 
@@ -156,7 +162,7 @@ three different git workflows (direct push, a gated shared branch, or a
 fully PR-gated `master`), each independently with and without commit
 signing enforced (six modes total) — then audits three hard invariants:
 no plaintext ever leaked, the repository's object graph stayed intact,
-and zero confirmed-pushed data was lost. **[CHAOS.md](CHAOS.md)** has the
+and zero confirmed-pushed data was lost. **[docs/securegit/03-chaos-sandbox.md](docs/securegit/03-chaos-sandbox.md)** has the
 full story, including what real runs actually found.
 
 ```sh

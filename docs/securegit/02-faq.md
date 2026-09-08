@@ -14,7 +14,7 @@ copies the repository — they only ever see scrambled, unreadable data for
 the files you've protected. Only someone who holds the right key can turn
 it back into the real file.
 
-**Details:** [README.md](README.md)
+**Details:** [README.md](../../README.md)
 
 ## Does this change how I use Git day to day?
 
@@ -23,7 +23,7 @@ it works exactly the way it always has. You don't type any special
 commands to encrypt or decrypt a file; Git does it for you in the
 background because you told it to, once, up front.
 
-**Details:** [specs/securegit/02-git-integration.md](specs/securegit/02-git-integration.md)
+**Details:** [specs/securegit/02-git-integration.md](../../specs/securegit/02-git-integration.md)
 
 ## How do I turn this on?
 
@@ -45,49 +45,54 @@ git clone …
 securegit unlock
 ```
 
-**Details:** [README.md](README.md#quickstart)
+**Details:** [README.md](../../README.md#quickstart)
 
 ## What kind of keystore does it support? Can I use a TPM, smartcard, or my OS's keychain?
 
-Today, one: a passphrase. Your key is stored locally, locked behind a
+**What you can actually turn on today, via the `securegit` command
+itself: one, a passphrase.** Your key is stored locally, locked behind a
 passphrase only you know, using the same kind of slow, deliberately
 expensive scrambling banks and password managers use to make a stolen
 copy useless without your actual passphrase (technically: `scrypt` to
 turn your passphrase into a lock, then AES-256-GCM to actually lock the
 key with it).
 
-The design deliberately leaves room for more, and two of these now have
-a real, concrete plan (not just an idea) written up, even though none of
-them are built yet:
+**Three more are built and tested, but not yet reachable from the
+`securegit` command line** — real, working code, verified against real
+hardware and real cryptography, just not wired into `securegit key
+add-provider` yet:
 
-- **A TPM chip, or your operating system's own keychain** (Windows
-  Credential Manager, macOS Keychain) — planned, not yet designed in
-  detail.
-- **A YubiKey or similar hardware security key** — this one has a real,
-  concrete design now, using either the key's smartcard mode (PIV) or
-  its authentication mode (FIDO2). Either way, the actual secret material
-  never leaves the physical device — you plug it in and touch it, the
-  device does the unlocking math itself, and nothing your computer can
-  read ever includes the raw key.
+- **A YubiKey or similar hardware security key** — using either the
+  key's smartcard mode (PIV) or its authentication mode (FIDO2). Either
+  way, the actual secret material never leaves the physical device — you
+  plug it in and touch it, the device does the unlocking math itself,
+  and nothing your computer can read ever includes the raw key. Built
+  and verified against a real YubiKey: the device's own math was checked
+  against an independent computation and matched exactly, and a full
+  lock/unlock cycle through the real hardware passed.
 - **A cloud key vault (AWS KMS, Google Cloud KMS, Azure Key Vault)** —
-  also has a concrete design, but with an important limit, on purpose:
-  this can never be your *only* way in. A cloud provider's key vault is
-  still something that provider could theoretically be compelled to
-  unlock, so it's only ever allowed as one option among several — useful
-  as a company-wide "break glass" backup, never as the single point of
-  trust the whole point of this tool is to avoid.
+  with an important limit, on purpose: this can never be your *only* way
+  in. A cloud provider's key vault is still something that provider
+  could theoretically be compelled to unlock, so it's only ever allowed
+  as one option among several — useful as a company-wide "break glass"
+  backup, never as the single point of trust the whole point of this
+  tool is to avoid. Built; not yet tested against a real cloud account
+  (only against realistic simulations), since that needs real cloud
+  credentials nobody's plugged in yet.
 
-None of the three are built yet — a passphrase alone already gets almost
-everyone real, meaningful protection, and the hardware/cloud versions are
-real engineering work worth scoping properly first rather than building
-speculatively.
+**Still just a plan, no code yet:** a TPM chip, or your operating
+system's own keychain (Windows Credential Manager, macOS Keychain).
+
+Turning any of the three built-but-not-wired-up options into something
+you can actually select from `securegit key add-provider` is the next
+step — track it in [01-architecture.md](01-architecture.md).
 
 Worth keeping separate: this is about what protects *your own*
 computer's copy of the key. Sharing that key with a teammate is a
 different mechanism entirely (see the next question) — every teammate
 still protects their own copy locally, the same way you protect yours.
 
-**Details:** [specs/securegit/06-key-provider-port.md](specs/securegit/06-key-provider-port.md)
+**Details:** [specs/securegit/06-key-provider-port.md](../../specs/securegit/06-key-provider-port.md)
 
 ## How do I give a teammate access?
 
@@ -101,7 +106,7 @@ securegit key add-recipient <their public key>
 
 That's it — their computer can now unlock the repository on its own.
 
-**Details:** [specs/securegit/08-multi-recipient.md](specs/securegit/08-multi-recipient.md)
+**Details:** [specs/securegit/08-multi-recipient.md](../../specs/securegit/08-multi-recipient.md)
 
 ## Someone left the team. Can I lock them out?
 
@@ -122,7 +127,7 @@ moment they had legitimate access. But it opens nothing written
 afterward. Think of it less like changing a lock and more like moving to
 a new lock and only handing out the new key to people still on the team.
 
-**Details:** [specs/securegit/09-rotation-recovery.md](specs/securegit/09-rotation-recovery.md)
+**Details:** [specs/securegit/09-rotation-recovery.md](../../specs/securegit/09-rotation-recovery.md)
 
 ## Is there an "owner" or admin who controls everyone else's access?
 
@@ -139,7 +144,7 @@ merged. The tool deliberately doesn't try to be its own gatekeeper — a
 gatekeeper is a thing that can go down, get hacked, or be forced to hand
 over access, and this project's whole design avoids having one.
 
-**Details:** [specs/securegit/08-multi-recipient.md](specs/securegit/08-multi-recipient.md)
+**Details:** [specs/securegit/08-multi-recipient.md](../../specs/securegit/08-multi-recipient.md)
 
 ## Can someone fake who made a change?
 
@@ -158,7 +163,7 @@ typed name — is already planned but not yet turned on by default. Until
 then, treat "who made this change" as trustworthy only as your team's
 own review habits make it.
 
-**Details:** [specs/securegit/16-adversarial-integrity.md](specs/securegit/16-adversarial-integrity.md)
+**Details:** [specs/securegit/16-adversarial-integrity.md](../../specs/securegit/16-adversarial-integrity.md)
 
 ## What happens if I lose my laptop, or forget my passphrase?
 
@@ -174,7 +179,7 @@ you're the only holder of a key with no recovery copy on file, and offers
 a one-time recovery export you can print or store somewhere safe ahead
 of time, before you need it.
 
-**Details:** [specs/securegit/09-rotation-recovery.md](specs/securegit/09-rotation-recovery.md)
+**Details:** [specs/securegit/09-rotation-recovery.md](../../specs/securegit/09-rotation-recovery.md)
 
 ## Can GitHub, a cloud backup, or anyone else who stores my repo read my files?
 
@@ -185,7 +190,7 @@ storing a copy of your repository can turn it back into the real file
 unless they separately hold one of the actual keys, which never gets
 uploaded anywhere.
 
-**Details:** [specs/securegit/01-threat-model.md](specs/securegit/01-threat-model.md)
+**Details:** [specs/securegit/01-threat-model.md](../../specs/securegit/01-threat-model.md)
 
 ## Are the `.gitattributes` file and the `.securegit` folder themselves encrypted?
 
@@ -212,7 +217,7 @@ a name:
 So the one thing that's actually secret never even travels with the
 repository in the first place.
 
-**Details:** [specs/securegit/05-key-hierarchy.md](specs/securegit/05-key-hierarchy.md)
+**Details:** [specs/securegit/05-key-hierarchy.md](../../specs/securegit/05-key-hierarchy.md)
 
 ## What if an encrypted file gets corrupted — would I even find out?
 
@@ -238,7 +243,7 @@ one file at a time, when you actually open it. A repo-wide "check
 everything" command is a reasonable thing to add later; it doesn't exist
 yet.
 
-**Details:** [specs/securegit/13-verify.md](specs/securegit/13-verify.md)
+**Details:** [specs/securegit/13-verify.md](../../specs/securegit/13-verify.md)
 
 ## I have an old repository that's already full of unencrypted files. Can I switch it over?
 
@@ -271,14 +276,14 @@ and ever seen by someone who shouldn't have it, the only thing that
 actually fixes that is changing the secret itself, not hiding where it
 used to be written down.
 
-**Details:** [specs/securegit/09-rotation-recovery.md](specs/securegit/09-rotation-recovery.md)
+**Details:** [specs/securegit/09-rotation-recovery.md](../../specs/securegit/09-rotation-recovery.md)
 
 ## My team already works a certain way — is securegit still worth it?
 
 Almost certainly, but exactly how much depends on how your team already
 handles changes to your main branch. There are three common shapes, and
 this project actually tests all three for real (not just in theory —
-see [CHAOS.md](CHAOS.md) for the live results):
+see [03-chaos-sandbox.md](03-chaos-sandbox.md) for the live results):
 
 - **W1 — Direct push.** Anyone can push straight to the main branch, no
   review step. Common on small teams, or any repo nobody's gotten around
@@ -326,9 +331,9 @@ already-trusted teammate (or an AI coding assistant with real access)
 choosing to misuse that access — signing can't tell "trusted person
 doing something wrong" apart from "trusted person doing something
 right." That specific, narrower scenario is documented and tested too:
-see [specs/chaotests/04-agent-threat-model.md](specs/chaotests/04-agent-threat-model.md).
+see [specs/chaotests/04-agent-threat-model.md](../../specs/chaotests/04-agent-threat-model.md).
 
-**Details:** [CHAOS.md](CHAOS.md), [specs/chaotests/03-orchestrator.md](specs/chaotests/03-orchestrator.md)
+**Details:** [03-chaos-sandbox.md](03-chaos-sandbox.md), [specs/chaotests/03-orchestrator.md](../../specs/chaotests/03-orchestrator.md)
 
 ## What does securegit *not* protect me from?
 
@@ -352,7 +357,7 @@ Being upfront about the limits matters as much as the guarantees:
   visible to anyone who can see the repository — only the *contents* of
   protected files are hidden.
 
-**Details:** [specs/securegit/01-threat-model.md](specs/securegit/01-threat-model.md)
+**Details:** [specs/securegit/01-threat-model.md](../../specs/securegit/01-threat-model.md)
 
 ## Why use this instead of git-crypt, SOPS, or age?
 
@@ -365,4 +370,4 @@ or replacing a compromised key never requires touching anything you've
 already committed. It also has no other software it depends on to run —
 one less thing that could be tampered with in a supply-chain attack.
 
-**Details:** [README.md](README.md#why-this-and-not-git-crypt--sops--age)
+**Details:** [README.md](../../README.md#why-this-and-not-git-crypt--sops--age)

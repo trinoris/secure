@@ -7,7 +7,7 @@ import { join } from 'node:path';
 // requirement under "Non-goals, restated" — the same checks
 // @trinoris/securegit's own package.test.ts has always had, moved here
 // along with crypto.ts/envelope.ts/identity.ts/recovery.ts as part of the
-// extraction into this package (ARCHITECTURE.md). This is the one package
+// extraction into this package (docs/securegit/01-architecture.md). This is the one package
 // that must hold zero dependencies of any kind, with no exception at all —
 // it's the package that actually holds key material, unlike
 // @trinoris/securegit, which is allowed exactly one (this package itself).

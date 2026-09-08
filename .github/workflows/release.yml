@@ -6,7 +6,7 @@ name: Release
 # tag-verification step below), commit, then:
 #   git tag v0.1.0 && git push --tags
 #
-# Since the extraction into @trinoris/securelib (ARCHITECTURE.md): this is
+# Since the extraction into @trinoris/securelib (docs/securegit/01-architecture.md): this is
 # a two-package npm workspace, not one package. The root package.json is
 # a private workspace root with no version of its own — it is never
 # published, and `npm publish` is run per-workspace instead, in dependency

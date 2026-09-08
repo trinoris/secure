@@ -465,7 +465,7 @@ options, both genuinely "a new dependency", not zero-cost:
 library, not this consumer, because nothing about a `KeyProvider` that
 wraps and unwraps a 32-byte key is Git-specific — it's exactly as usable
 by a future non-Git consumer of the same port as it is by `securegit`.
-See [../../ARCHITECTURE.md](../../ARCHITECTURE.md) for the full reasoning
+See [../../docs/securegit/01-architecture.md](../../docs/securegit/01-architecture.md) for the full reasoning
 and the `@trinoris/securelib` extraction this naming anticipates. Either
 way — inside `securegit` today or `securelib` once it exists — the point
 holds: the core package's "zero runtime dependencies" claim
@@ -581,7 +581,7 @@ CTAP2 client library capable of talking to the raw device — not a browser
 WebAuthn call (there's no browser here). Same recommendation, same name
 pattern, as PIV: an optional companion package,
 **`@trinoris/securelib-fido2`**, not `securegit-fido2` — see
-[../../ARCHITECTURE.md](../../ARCHITECTURE.md).
+[../../docs/securegit/01-architecture.md](../../docs/securegit/01-architecture.md).
 
 **Status: built.** `YubikeyFido2Provider` (`fido2.ts`) and the
 `Fido2Authenticator` port are real. Test plan realised as designed:
@@ -692,7 +692,7 @@ have at least one non-custodial way back in.
 The packaging question `yubikey-piv` and `yubikey-fido2` both raise above
 (an optional companion package, not a dependency of the core) but leave
 open. Settled here, now that
-[ARCHITECTURE.md](../../ARCHITECTURE.md)'s Phase 1 has actually happened:
+[docs/securegit/01-architecture.md](../../docs/securegit/01-architecture.md)'s Phase 1 has actually happened:
 `@trinoris/securelib` lives at `packages/securelib` inside this same
 repository's own npm workspace (`packages/*`), not a separate one. That
 simplifies the packaging question this section originally deferred —
@@ -714,7 +714,7 @@ hand-rolled SigV4/JWT request signing needs nothing PC/SC or CTAP2/HID
 don't already rule out avoiding. There's no honest reason to push it
 behind a dynamic import when it costs the core nothing to include
 directly, the same way `passphrase-file` is. This corrects
-[ARCHITECTURE.md](../../ARCHITECTURE.md)'s softer "worth deciding at
+[docs/securegit/01-architecture.md](../../docs/securegit/01-architecture.md)'s softer "worth deciding at
 implementation time" hedge on this point — the more detailed design
 above already decided it.
 

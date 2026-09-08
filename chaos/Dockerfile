@@ -12,7 +12,7 @@
 # directory, because this stage needs the whole packages/ workspace and the
 # root package.json from there.
 #
-# Since the extraction into @trinoris/securelib (ARCHITECTURE.md): this is
+# Since the extraction into @trinoris/securelib (docs/securegit/01-architecture.md): this is
 # now a two-package npm workspace, not one flat package. `npm ci` at the
 # root installs and symlinks both; `npm run build --workspaces` builds
 # both. The runtime stage below copies both packages' `dist/` output —

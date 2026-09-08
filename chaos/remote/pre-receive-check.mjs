@@ -38,7 +38,7 @@
 // dist is baked into this same shared image (chaos/Dockerfile), exactly
 // like chaos/lib/paths.mjs's re-exports — rather than reimplementing
 // fingerprint hashing or constant-time comparison a second time here.
-// identity.ts/crypto.ts moved to @trinoris/securelib (ARCHITECTURE.md).
+// identity.ts/crypto.ts moved to @trinoris/securelib (docs/securegit/01-architecture.md).
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';

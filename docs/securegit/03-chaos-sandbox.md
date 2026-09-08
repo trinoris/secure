@@ -5,7 +5,7 @@ hand-picked inputs — they're measured against a live, adversarial
 simulation: real Docker containers, a real `git` daemon, real collaborators
 pushing and pulling for minutes at a stretch, a real hostile pusher
 attempting the exact attack catalogue in
-[specs/securegit/16-adversarial-integrity.md](specs/securegit/16-adversarial-integrity.md),
+[specs/securegit/16-adversarial-integrity.md](../../specs/securegit/16-adversarial-integrity.md),
 and an unprivileged verifier auditing the result the same way a real
 repository auditor would: a fresh clone, no key, no access to any actor's
 workstation.
@@ -24,7 +24,7 @@ of what chaos happened during it:
    reachable, and every protected blob still decrypts to its original
    content, across every key rotation the run performed.
 
-See [specs/chaotests/01-sandbox.md](specs/chaotests/01-sandbox.md) for the
+See [specs/chaotests/01-sandbox.md](../../specs/chaotests/01-sandbox.md) for the
 full design and exactly how each invariant is audited.
 
 ## Three real-world git workflows, compared
@@ -40,7 +40,7 @@ structure write access to a repository:
 
 Full design, including exactly what the automated reviewer checks and its
 honestly-documented limits, in
-[specs/chaotests/03-orchestrator.md](specs/chaotests/03-orchestrator.md).
+[specs/chaotests/03-orchestrator.md](../../specs/chaotests/03-orchestrator.md).
 
 ### Two independent axes, not four workflows
 
@@ -112,7 +112,7 @@ attacker only.
 `bad-agent` now models something the numbers above don't cover at all: a
 genuinely registered, genuinely signing collaborator, hijacked into a
 prompt-injection-shaped attack on a fraction of its rounds
-([specs/chaotests/04-agent-threat-model.md](specs/chaotests/04-agent-threat-model.md)).
+([specs/chaotests/04-agent-threat-model.md](../../specs/chaotests/04-agent-threat-model.md)).
 Confirmed locally, then on real GitHub Actions infrastructure
 ([run 34041479353](https://github.com/trinoris/secure/actions/runs/34041479353)),
 where the longer run surfaced a real mechanism the shorter local runs
@@ -137,7 +137,7 @@ missed:
   against an attacker poisoning its own branch's own future commits —
   no prior attacker-shaped role ever also did ongoing legitimate work on
   the branch it attacked. Full mechanism in
-  [specs/chaotests/04-agent-threat-model.md](specs/chaotests/04-agent-threat-model.md)'s
+  [specs/chaotests/04-agent-threat-model.md](../../specs/chaotests/04-agent-threat-model.md)'s
   "self-poisoning correction". Plaintext exfiltration to an unprotected
   path (`debug.log`) also got through in every `pr-gated` run (11–38
   occurrences) — honestly reported by the verifier as observed, not
@@ -171,7 +171,7 @@ SANDBOX_WORKFLOW=direct-master SANDBOX_SIGNING=advance npm run chaos:sandbox
 SANDBOX_WORKFLOW=working-branch SANDBOX_SIGNING=advance npm run chaos:sandbox
 ```
 
-See [chaos/README.md](chaos/README.md) for prerequisites, the exact
+See [chaos/README.md](../../chaos/README.md) for prerequisites, the exact
 commands, and troubleshooting.
 
 ## The cast
@@ -183,7 +183,7 @@ commands, and troubleshooting.
 | operator / orchestrator | Maintenance & review | `direct-master`: key rotation, `verify`, status checks, and post-hoc attribute recovery. `working-branch`/`pr-gated`: reviews every proposed change before `master` ever moves |
 | chaos-4 "virus" | Local corruption | Tampers with a collaborator's own session/keyring/identity files — the shape of commodity ransomware or a crashing backup tool |
 | chaos-5 "attacker" | Hostile outsider | Ordinary push access, no registered identity — attempts attribute downgrades, blob relocation/rollback, and hostile recipients, exactly matching a real collaborator-shaped attacker who was never a recipient |
-| bad-agent | Hijacked trusted agent (AI) | A genuine, registered, signing collaborator — same identity and decrypt access as code-agent — that on ~30% of rounds is hijacked into one of four *signed* prompt-injection attacks (attribute downgrade, blob relocation, plaintext exfiltration, hostile recipient) instead of an ordinary commit; see [specs/chaotests/04-agent-threat-model.md](specs/chaotests/04-agent-threat-model.md) |
+| bad-agent | Hijacked trusted agent (AI) | A genuine, registered, signing collaborator — same identity and decrypt access as code-agent — that on ~30% of rounds is hijacked into one of four *signed* prompt-injection attacks (attribute downgrade, blob relocation, plaintext exfiltration, hostile recipient) instead of an ordinary commit; see [specs/chaotests/04-agent-threat-model.md](../../specs/chaotests/04-agent-threat-model.md) |
 | chaos-6 "infra" | Infrastructure faults | Kills processes mid-operation, fills disk, drops network links — impersonal fault injection, not attacker-shaped |
 | verifier | Auditor | No key, fresh clone only — exactly the access a real outside auditor would have |
 
@@ -222,7 +222,7 @@ CHAOS_DURATION_SECONDS=840 npm run chaos:sandbox
 ```
 
 Longer runs matter for more than flavor: the pr-gated self-poisoning
-finding above ([specs/chaotests/04-agent-threat-model.md](specs/chaotests/04-agent-threat-model.md))
+finding above ([specs/chaotests/04-agent-threat-model.md](../../specs/chaotests/04-agent-threat-model.md))
 only ever showed up on real CI's 180s/T3:00 legs — the 90s/T1:30 local
 runs used while building it were simply too short for bad-agent to both
 fire PI1 and then get another ordinary round in afterward. A run that
@@ -233,16 +233,16 @@ more likely to surface a low-probability interaction, never less.
 
 ## Deep dives
 
-- [specs/chaotests/00-test-plan.md](specs/chaotests/00-test-plan.md) — the
+- [specs/chaotests/00-test-plan.md](../../specs/chaotests/00-test-plan.md) — the
   deterministic, one-fault-at-a-time chaos categories this sandbox
   complements
-- [specs/chaotests/01-sandbox.md](specs/chaotests/01-sandbox.md) — full
+- [specs/chaotests/01-sandbox.md](../../specs/chaotests/01-sandbox.md) — full
   sandbox design, topology, and exactly how each invariant is verified
-- [specs/chaotests/02-viewer.md](specs/chaotests/02-viewer.md) — the
+- [specs/chaotests/02-viewer.md](../../specs/chaotests/02-viewer.md) — the
   replay viewer's own design
-- [specs/chaotests/03-orchestrator.md](specs/chaotests/03-orchestrator.md)
+- [specs/chaotests/03-orchestrator.md](../../specs/chaotests/03-orchestrator.md)
   — the three-workflow comparison: reasoning, real-world precedent, the
   review's exact accept/reject criteria, and its honestly-documented gaps
-- [specs/securegit/16-adversarial-integrity.md](specs/securegit/16-adversarial-integrity.md)
+- [specs/securegit/16-adversarial-integrity.md](../../specs/securegit/16-adversarial-integrity.md)
   — the attack catalogue chaos-5 automates, and why each one is or isn't
   fully solvable client-side

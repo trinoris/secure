@@ -513,7 +513,7 @@ export async function verify(opts: VerifyOptions): Promise<VerifyReport> {
 
 /**
  * specs/securegit/13-verify.md, "Authenticity" — closes the gap
- * documented in FAQ.md: every attribution claim elsewhere in this
+ * documented in docs/securegit/02-faq.md: every attribution claim elsewhere in this
  * project (`addedBy`, git's own author field) is a self-reported string,
  * not a proof. This is the one check that actually verifies who
  * committed something, against this repository's own recipient list —

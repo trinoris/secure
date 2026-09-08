@@ -8,7 +8,7 @@ import { join } from 'node:path';
 // published package and the source tree, not of any one module's behaviour,
 // so they belong in their own file rather than beside filter.ts or cli.ts.
 //
-// Since the extraction into @trinoris/securelib (ARCHITECTURE.md), T11's
+// Since the extraction into @trinoris/securelib (docs/securegit/01-architecture.md), T11's
 // "zero runtime dependencies" is checked per package, not once for a single
 // monolith. This file covers @trinoris/securegit's own footprint: exactly
 // one internal dependency (@trinoris/securelib — the same repo, same CI,

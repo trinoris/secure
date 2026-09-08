@@ -203,7 +203,7 @@ now have a concrete design (06's "Concrete designs for the next three
 providers"), including the recommendation that the two hardware ones ship
 as separate, optional companion packages — `@trinoris/securelib-piv` and
 `@trinoris/securelib-fido2`, named under a future shared library rather
-than this package (see [../../ARCHITECTURE.md](../../ARCHITECTURE.md)) —
+than this package (see [../../docs/securegit/01-architecture.md](../../docs/securegit/01-architecture.md)) —
 rather than in core, but
 "designed" is still "not built."
 
