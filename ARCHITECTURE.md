@@ -236,17 +236,25 @@ after the fact — real, avoidable risk for no benefit.
    dependency" — this is the point `securegit`'s own `package.json` gains
    a real, external `@trinoris/securelib` dependency rather than a
    workspace link.
-4. **Build the provider companion packages against the now-public port.**
-   This is where the `kms-envelope`/`yubikey-piv`/`yubikey-fido2` design
-   work from `06-key-provider-port.md` actually gets implemented — against
-   a stable, published `securelib`, not against `securegit`'s internals.
-   Packaging is settled (`06-key-provider-port.md`'s "Loading a provider
-   package without paying for it"): `kms-envelope` ships inside
-   `securelib` core (`registry.ts`'s `BUILTIN` map); `yubikey-piv` and
-   `yubikey-fido2` are the only two real companion packages
-   (`packages/securelib-piv`, `packages/securelib-fido2`), loaded lazily
-   via `loadProvider()`'s dynamic `import()` by naming convention, never a
-   dependency of `securelib` or `securegit` themselves.
+4. **IN PROGRESS. Build the provider companion packages against the
+   now-public port.** Packaging is settled and built
+   (`06-key-provider-port.md`'s "Loading a provider package without
+   paying for it"): `registry.ts`'s `loadProvider()` resolves
+   `kms-envelope` from `BUILTIN`, and `yubikey-piv`/`yubikey-fido2` by
+   dynamic `import()` naming convention, giving an actionable
+   `npm install @trinoris/securelib-*` error when the (not yet built)
+   companion package is absent. All three `KeyProvider` implementations
+   themselves are built and pass the full conformance suite against a
+   real cryptographic fake (`kms-envelope.ts`, `piv.ts`, `fido2.ts`) — a
+   real bug caught along the way: `KmsEnvelopeProvider.unwrap()`
+   originally trusted the wrapped payload's own `keyId` instead of
+   checking it against the caller's configured key. **What's left, and
+   deliberately not attempted without real access to verify it against:**
+   a real `KmsBackend` (AWS/GCP/Azure, hand-rolled signed HTTPS — needs no
+   hardware, just real cloud credentials to test against) and the two
+   real companion packages themselves, `@trinoris/securelib-piv`/
+   `-fido2` (PC/SC and CTAP2/HID — need real hardware, which a
+   real-hardware integration test can never run in CI regardless).
 5. **`@trinoris/securedoc`** (future, unscoped) becomes a second real
    consumer of `securelib`, proving the extraction was worth doing rather
    than merely aesthetic.

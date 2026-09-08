@@ -14,9 +14,20 @@
 // loading it until this function actually runs.
 
 import { PassphraseFileProvider, ProviderError, type KeyProvider } from './provider.js';
+import { KmsEnvelopeProvider, type KmsBackend } from './kms-envelope.js';
+
+export interface KmsEnvelopeConfig {
+  backend: KmsBackend;
+  backendTag: 'aws' | 'gcp' | 'azure';
+  keyId: string;
+}
 
 const BUILTIN: Record<string, (config: unknown) => KeyProvider> = {
   'passphrase-file': (config) => new PassphraseFileProvider(config as () => Promise<string> | string),
+  'kms-envelope': (config) => {
+    const { backend, backendTag, keyId } = config as KmsEnvelopeConfig;
+    return new KmsEnvelopeProvider(backend, backendTag, keyId);
+  },
 };
 
 const COMPANION_PACKAGE: Record<string, string> = {

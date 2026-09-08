@@ -7,22 +7,30 @@ has and the cloud does not. That something differs per user and per machine —
 passphrase today, a TPM on the desktop, a smartcard for the person who travels.
 This is the interface that keeps that choice out of the crypto core.
 
-**Status: IMPLEMENTED — the port, one provider, and the CLI surface to add
-or remove one.** `src/provider.ts` (the `KeyProvider` interface) and
-`PassphraseFileProvider` are both built and tested. `passphrase-file`
-remains the only v1 implementation; hardware and cloud-KMS providers
-(`tpm2`, `os-keychain`, `kms-envelope`, `yubikey-piv`, `yubikey-fido2`)
-sit behind this same port, unimplemented, by design — see
-[00](00-test-plan.md)'s "Deliberately not phased" note, which no longer
-covers `key add-provider`/`remove-provider`/`list` themselves (those are
-built now, see below), only the hardware/cloud provider types they'd
-otherwise have nothing real to add or remove. Three of those five now
-have a concrete design, not just a name: see "Concrete designs for the
-next three providers" below for `kms-envelope`, `yubikey-piv`, and
-`yubikey-fido2` — design only, `KeyProvider` implementations not yet
-built. The loading mechanism they'll plug into *is* built, ahead of any
-of the three: `loadProvider()` in `registry.ts` — see "Loading a
-provider package without paying for it" below.
+**Status: the port, four `KeyProvider` implementations, the registry that
+loads them, and the CLI surface to add or remove one — all built and
+tested in software.** `src/provider.ts` (the `KeyProvider` interface),
+`PassphraseFileProvider`, `KmsEnvelopeProvider` (`kms-envelope.ts`),
+`YubikeyPivProvider` (`piv.ts`) and `YubikeyFido2Provider` (`fido2.ts`)
+all pass the full conformance suite (`provider.conformance.test.ts`,
+`describe.each` over all four). `registry.ts`'s `loadProvider()` resolves
+`passphrase-file`/`kms-envelope` eagerly and `yubikey-piv`/`yubikey-fido2`
+by dynamic `import()` — see "Loading a provider package without paying
+for it" below. **What's genuinely not built, drawn as an honest line, not
+a gap glossed over:** the real transports the last three need to talk to
+actual hardware or a cloud — `PivCard`/`Fido2Authenticator`'s real PC/SC
+and CTAP2/HID implementations, and `KmsBackend`'s real AWS/GCP/Azure
+signed-HTTPS backend. Every `KeyProvider`'s own logic (key derivation,
+AEAD wrap/unwrap, AAD binding, the `ctx.interactive` gate) is real and
+tested against a real cryptographic fake (a genuine ECDH computation for
+PIV, a genuine HMAC for FIDO2) — only the hardware/network call at the
+very bottom is faked, exactly the boundary [00](00-test-plan.md)'s
+"Deliberately not phased" note and each provider's own "Test plan"
+section below already drew: a real-hardware or real-cloud integration
+test is separate, manual, and can never run in CI.
+[00](00-test-plan.md)'s note no longer covers `key add-provider`/
+`remove-provider`/`list` themselves (built), only these three providers'
+own real-world transports.
 
 `key add-provider`/`remove-provider`/`list` ([10](10-cli-contract.md)) are
 implemented as `addProvider()`/`removeProvider()` in `src/keyring.ts`.
@@ -152,10 +160,10 @@ existing code.
 | `passphrase-file` | no | **v1** | scrypt → KEK → AES-256-GCM. Works everywhere, including WSL and CI. |
 | `os-keychain` | no | designed | DPAPI / macOS Keychain / libsecret. Better UX; no keychain under WSL, so it always needs a fallback. |
 | `tpm2` | no | designed | Seals the RMK to PCRs. Machine-bound: a re-imaged laptop loses it, so it is never the only path. |
-| `yubikey-piv` | no | **designed, concretely** | YubiKey / PIV smartcard, via the card's own ECDH operation. See "Concrete designs" below. |
-| `yubikey-fido2` | no | **designed, concretely** | YubiKey / any FIDO2 authenticator, via the `hmac-secret` CTAP2 extension. See "Concrete designs" below. |
+| `yubikey-piv` | no | **`YubikeyPivProvider` built, real PC/SC transport not** | `packages/securelib/src/piv.ts` — full conformance suite passes against a `FakePivCard` performing real P-256 ECDH (`piv.test.ts`, `provider.conformance.test.ts`). The `PivCard` port itself is the honest boundary: a real `@trinoris/securelib-piv` companion package implementing it against actual PC/SC hardware doesn't exist yet — see "Concrete designs" below. |
+| `yubikey-fido2` | no | **`YubikeyFido2Provider` built, real CTAP2/HID transport not** | `packages/securelib/src/fido2.ts` — same shape, against a `FakeFido2Authenticator` (`fido2.test.ts`). See "Concrete designs" below. |
 | `recovery-code` | no | built, but not a `KeyProvider` | Not interactive; used by `import-recovery` ([09](09-rotation-recovery.md)). As built, this is *not* a `KeyProvider` implementation behind this port — `src/recovery.ts` derives its wrap key directly from the code via HKDF and does its own AES-256-GCM wrap/unwrap, bypassing `provider.ts` entirely. The RMKs it recovers are then handed to an ordinary `PassphraseFileProvider` (via `keyringFromRecoveredGenerations`) to become the new local keyring's actual provider. The reason: this port's `init`/`wrap`/`unwrap` shape is built around one *persistent* secret per generation (a passphrase, a TPM binding); a recovery code instead needs to decrypt *every* generation at once under one code, which doesn't fit that per-generation shape without distortion. |
-| `kms-envelope` | **yes** | **designed, concretely** | Deliberate escrow only, never the sole path. See "Concrete designs" below. |
+| `kms-envelope` | **yes** | **`KmsEnvelopeProvider` built and wired into `registry.ts`; no real cloud backend yet** | `packages/securelib/src/kms-envelope.ts` — full conformance suite passes against a `FakeKmsBackend`. A real `AwsKmsBackend`/`GcpKmsBackend`/`AzureKmsBackend` (hand-rolled request signing, per "Concrete designs" below) isn't built. |
 
 ## `custodial` is the field that matters
 
@@ -295,17 +303,27 @@ need network access but nothing from `ctx.interactive`, and happen once
 per `unlock` (cached in the session, [07](07-unlock-session.md)), never
 once per file.
 
-**Test plan:** `KmsBackend` is the injection seam. A `FakeKmsBackend`
-(in-memory `Map<keyId, plaintext-by-ciphertext>`, context checked exactly
-like the real thing would enforce it) lets `KmsEnvelopeProvider` run
-through the *entire* existing `provider.conformance.test.ts` suite —
-`describe.each` gains a fourth row — with zero real network calls, exactly
-like `PassphraseFileProvider` needs no real disk contention today. A
-separate, clearly-labeled real-backend integration test per cloud,
-skipped unless real credentials are present in the environment (`aws-vault`-
-style, never committed), is the only thing that would need actual AWS/GCP/
-Azure access — appropriate to add once a backend is actually implemented,
-not before.
+**Status: built.** `KmsEnvelopeProvider` (`kms-envelope.ts`) and the
+`KmsBackend` port are real; `registry.ts` loads it eagerly (`BUILTIN`,
+not a companion package — see "Loading a provider package" below). Test
+plan realised as designed: `FakeKmsBackend` (in-memory `Map<token,
+plaintext>`, context checked exactly like a real backend would enforce
+it) runs `KmsEnvelopeProvider` through the *entire*
+`provider.conformance.test.ts` suite (`describe.each`'s fourth row) with
+zero real network calls, plus `kms-envelope.test.ts`'s own tests —
+including one real bug this caught before it shipped: `unwrap()`
+originally trusted the wrapped payload's own `keyId` field instead of
+checking it against the caller's configured key, so a ciphertext the
+backend still held could be unwrapped by a *different* `KmsEnvelopeProvider`
+instance than the one that wrapped it, as long as `repoId`/`generation`
+still matched — fixed by checking `keyId` against `ctx.state`, the same
+"fails rather than silently succeeding somewhere it shouldn't" property
+every other binding here already had. **Not built:** a real
+`AwsKmsBackend`/`GcpKmsBackend`/`AzureKmsBackend` implementing
+`KmsBackend` against an actual cloud, and the real-credential integration
+test (skipped unless real credentials are present, `aws-vault`-style,
+never committed) that would exercise one — appropriate once a real
+backend exists, not before.
 
 ### `yubikey-piv` — YubiKey / any PIV smartcard
 
@@ -368,15 +386,24 @@ provider package without paying for it" below for how a provider id
 resolves to its companion package without either core package ever
 depending on it.
 
-**Test plan:** a `PivCard` transport interface —
-`getPublicKey(slot): Promise<Buffer>`, `ecdh(slot, peerPublicKey, pin):
-Promise<Buffer>` — is the injection seam, faked in-memory for the full
-conformance suite the same way `KmsBackend` is above. A real-hardware
-integration test is separate, manual, and can never run in CI without a
-physical key attached — an honest limit, not a gap to silently paper
-over, the same way this project already treats "code execution on an
-unlocked workstation" as a named boundary rather than a solved problem
-([01](01-threat-model.md)).
+**Status: built.** `YubikeyPivProvider` (`piv.ts`) and the `PivCard` port
+are real. Test plan realised as designed: `getPublicKey(slot):
+Promise<Buffer>`, `ecdh(slot, peerPublicKey, pin): Promise<Buffer>` is
+the injection seam; `FakePivCard` (`piv.test.ts`,
+`provider.conformance.test.ts`) performs a genuine P-256 ECDH computation
+via `node:crypto`'s `createECDH` — only "is a physical card present" is
+faked, not the cryptography itself. Passes the full conformance suite
+(`describe.each`'s third row) plus `piv.test.ts`'s own tests: the
+`ctx.interactive` gate throws before ever touching the card, and
+`wrap()` never calls `ecdh()` at all (proven by a call-counting wrapper
+around the fake), matching "wrap() only ever touches the card's public
+key" above. **Not built:** a real `@trinoris/securelib-piv` companion
+package implementing `PivCard` against actual PC/SC hardware. A
+real-hardware integration test is separate, manual, and can never run in
+CI without a physical key attached — an honest limit, not a gap to
+silently paper over, the same way this project already treats "code
+execution on an unlocked workstation" as a named boundary rather than a
+solved problem ([01](01-threat-model.md)).
 
 ### `yubikey-fido2` — any FIDO2 authenticator, via `hmac-secret`
 
@@ -411,11 +438,21 @@ pattern, as PIV: an optional companion package,
 **`@trinoris/securelib-fido2`**, not `securegit-fido2` — see
 [../../ARCHITECTURE.md](../../ARCHITECTURE.md).
 
-**Test plan:** a `Fido2Authenticator` transport interface —
+**Status: built.** `YubikeyFido2Provider` (`fido2.ts`) and the
+`Fido2Authenticator` port are real. Test plan realised as designed:
 `makeCredential(extensions): Promise<{credentialId}>`,
-`getAssertion(credentialId, salt): Promise<Buffer>` — fakeable the same
-way as `KmsBackend`/`PivCard`; real-hardware coverage is separate, manual,
-same honest CI limit as PIV.
+`getAssertion(credentialId, salt): Promise<Buffer>` is the injection
+seam; `FakeFido2Authenticator` (`fido2.test.ts`,
+`provider.conformance.test.ts`) derives its assertion via a genuine HMAC
+over a per-instance secret, standing in for the real hmac-secret
+extension's own HMAC(credRandom, salt) — different instances (different
+physical keys) never produce the same secret for the same credential/
+salt, proven directly. Passes the full conformance suite
+(`describe.each`'s fourth row) plus `fido2.test.ts`'s own tests: the
+`ctx.interactive` gate throws before ever touching the authenticator.
+**Not built:** a real `@trinoris/securelib-fido2` companion package
+implementing `Fido2Authenticator` against actual CTAP2/HID hardware;
+real-hardware coverage is separate, manual, same honest CI limit as PIV.
 
 ## Multiple providers per repository
 
@@ -532,10 +569,13 @@ its package by prefixing `@trinoris/securelib-`, stripped of its own
 `securelib` itself, loaded eagerly, never through this path.
 
 ```typescript
-// packages/securelib/src/registry.ts (not yet built)
-const BUILTIN: Record<string, () => KeyProvider> = {
-  'passphrase-file': () => new PassphraseFileProvider(...),
-  'kms-envelope': () => new KmsEnvelopeProvider(...),
+// packages/securelib/src/registry.ts — built as shown, not just sketched
+const BUILTIN: Record<string, (config: unknown) => KeyProvider> = {
+  'passphrase-file': (config) => new PassphraseFileProvider(config as () => Promise<string> | string),
+  'kms-envelope': (config) => {
+    const { backend, backendTag, keyId } = config as KmsEnvelopeConfig;
+    return new KmsEnvelopeProvider(backend, backendTag, keyId);
+  },
 };
 
 const COMPANION_PACKAGE: Record<string, string> = {
@@ -545,7 +585,7 @@ const COMPANION_PACKAGE: Record<string, string> = {
 
 export async function loadProvider(id: string, config: unknown): Promise<KeyProvider> {
   const builtin = BUILTIN[id];
-  if (builtin) return builtin();
+  if (builtin) return builtin(config);
 
   const pkg = COMPANION_PACKAGE[id];
   if (!pkg) throw new ProviderError(`securegit: unknown provider id '${id}'`);
@@ -582,8 +622,8 @@ doesn't depend on.
 
 **Status: `registry.ts` and `loadProvider()` are built and tested** —
 `packages/securelib/src/registry.ts`, `@trinoris/securelib/registry`.
-Only `passphrase-file` is in `BUILTIN` for real today; `kms-envelope`
-joins it once `KmsEnvelopeProvider` itself is built. The two companion
+Both `passphrase-file` and `kms-envelope` resolve from `BUILTIN` for
+real. The two companion
 packages (`@trinoris/securelib-piv`, `@trinoris/securelib-fido2`)
 themselves don't exist yet — `loadProvider()` already gives an honest,
 actionable error for both (`npm install @trinoris/securelib-piv`, etc.),
@@ -615,17 +655,20 @@ packages on disk, not a mock.
 | `key unlock` tries every passphrase-file-shaped provider id present, not only the unlabeled default | `src/cli.test.ts` | — | ✅ |
 | A custodial-only repository is a `verify` finding | `src/verify.test.ts` | — | ✅ |
 | Provider never receives a path or file content | `src/provider.conformance.test.ts` | — | ✅ |
-| `KmsEnvelopeProvider` passes the full conformance suite against a `FakeKmsBackend` | `src/provider.conformance.test.ts` | — | not built — design only, see "Concrete designs" above |
-| `KmsEnvelopeProvider.wrap`/`unwrap` bind `repoId`/`generation` into the backend's own AAD/encryption-context field | `src/provider.test.ts` | — | not built — design only |
-| A repository with only `kms-envelope` wrapping the current generation is a `verify` finding (existing custodial-only check, no new logic) | `src/verify.test.ts` | — | not built — design only |
-| `YubikeyPivProvider` passes the full conformance suite against a `FakePivCard` | `src/provider.conformance.test.ts` | — | not built — design only, see "Concrete designs" above |
-| `YubikeyPivProvider.unwrap` throws a specific, actionable error when `ctx.interactive` is `false` | `src/provider.test.ts` | — | not built — design only |
-| `YubikeyFido2Provider` passes the full conformance suite against a `FakeFido2Authenticator` | `src/provider.conformance.test.ts` | — | not built — design only, see "Concrete designs" above |
+| `KmsEnvelopeProvider` passes the full conformance suite against a `FakeKmsBackend` | `src/provider.conformance.test.ts` | — | ✅ |
+| `KmsEnvelopeProvider.wrap`/`unwrap` bind `repoId`/`generation` into the backend's own AAD/encryption-context field | `src/kms-envelope.test.ts` | — | ✅ (via `unwrap()` fails when the wrapped ciphertext was encrypted under a different `repoId`/`generation`, enforced by the fake's own context check) |
+| `KmsEnvelopeProvider.unwrap` rejects a wrapped payload whose `keyId` doesn't match the caller's own configured key | `src/kms-envelope.test.ts` | — | ✅ — caught a real bug: `unwrap()` originally trusted the payload's own `keyId` instead of checking it, see "Concrete designs" above |
+| A repository with only `kms-envelope` wrapping the current generation is a `verify` finding (existing custodial-only check, no new logic) | `src/verify.test.ts` | — | not built — `verify.ts` hasn't been extended to exercise a real `KmsEnvelopeProvider` yet, though the underlying custodial-only check it would reuse is already built and tested against `providers: KeyProvider[]` generically |
+| `YubikeyPivProvider` passes the full conformance suite against a `FakePivCard` | `src/provider.conformance.test.ts` | — | ✅ |
+| `YubikeyPivProvider.unwrap` throws a specific, actionable error when `ctx.interactive` is `false` | `src/piv.test.ts` | — | ✅ |
+| `YubikeyPivProvider.wrap` never calls `PivCard.ecdh()` — only reads the card's public key | `src/piv.test.ts` | — | ✅ |
+| `YubikeyFido2Provider` passes the full conformance suite against a `FakeFido2Authenticator` | `src/provider.conformance.test.ts` | — | ✅ |
+| `YubikeyFido2Provider.unwrap` throws a specific, actionable error when `ctx.interactive` is `false` | `src/fido2.test.ts` | — | ✅ |
 | `loadProvider('passphrase-file', ...)` resolves to a real, working provider — no dynamic `import()` needed | `src/registry.test.ts` | — | ✅ |
 | `loadProvider('yubikey-piv'/'yubikey-fido2', ...)` with the companion package absent throws a `npm install @trinoris/securelib-*` error, not a raw module-resolution error | `src/registry.test.ts` | — | ✅ |
 | `loadProvider()` with an unknown id rejects with `ProviderError`, distinctly from a missing companion package | `src/registry.test.ts` | — | ✅ |
 | Neither `securelib` nor `securegit` lists a companion package as a dependency (T11, `package.test.ts`'s existing exact-dependency-list check already enforces this — no dedicated test needed) | `src/package.test.ts` | — | ✅ |
-| `KmsEnvelopeProvider` is loaded via `registry.ts`'s `BUILTIN` map, not a dynamic `import()`, once built | `src/registry.test.ts` | — | not built — `KmsEnvelopeProvider` itself doesn't exist yet |
+| `loadProvider('kms-envelope', ...)` resolves via `registry.ts`'s `BUILTIN` map, not a dynamic `import()` | `src/registry.test.ts` | — | ✅ |
 
 ## Relationship to Other Specs
 

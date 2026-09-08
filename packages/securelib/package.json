@@ -27,6 +27,18 @@
       "types": "./dist/registry.d.ts",
       "import": "./dist/registry.js"
     },
+    "./kms-envelope": {
+      "types": "./dist/kms-envelope.d.ts",
+      "import": "./dist/kms-envelope.js"
+    },
+    "./piv": {
+      "types": "./dist/piv.d.ts",
+      "import": "./dist/piv.js"
+    },
+    "./fido2": {
+      "types": "./dist/fido2.d.ts",
+      "import": "./dist/fido2.js"
+    },
     "./config": {
       "types": "./dist/config.d.ts",
       "import": "./dist/config.js"

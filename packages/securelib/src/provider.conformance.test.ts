@@ -8,7 +8,7 @@
 // See specs/securegit/06-key-provider-port.md.
 
 import { describe, it, expect } from 'vitest';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createECDH, createHmac } from 'node:crypto';
 import { isSecret } from './crypto.js';
 import {
   PassphraseFileProvider,
@@ -16,8 +16,73 @@ import {
   type KeyProvider,
   type ProviderContext,
 } from './provider.js';
+import { KmsEnvelopeProvider, type KmsBackend } from './kms-envelope.js';
+import { YubikeyPivProvider, type PivCard } from './piv.js';
+import { YubikeyFido2Provider, type Fido2Authenticator } from './fido2.js';
 
 const FAST_COST = { N: 2 ** 10, r: 8, p: 1 };
+
+/**
+ * In-memory Map<token, plaintext>, context checked exactly like a real
+ * backend would enforce it — see kms-envelope.test.ts for the
+ * provider-specific tests this same shape backs, and
+ * specs/securegit/06-key-provider-port.md's "Test plan" for kms-envelope.
+ */
+class FakeKmsBackend implements KmsBackend {
+  private readonly store = new Map<string, { plaintext: Buffer; keyId: string; context: Record<string, string> }>();
+  private counter = 0;
+
+  async encrypt(rmkBytes: Buffer, keyId: string, context: Record<string, string>): Promise<Buffer> {
+    const token = `token-${this.counter++}`;
+    this.store.set(token, { plaintext: Buffer.from(rmkBytes), keyId, context });
+    return Buffer.from(token, 'utf8');
+  }
+
+  async decrypt(wrappedRmkBytes: Buffer, keyId: string, context: Record<string, string>): Promise<Buffer> {
+    const entry = this.store.get(wrappedRmkBytes.toString('utf8'));
+    if (!entry) throw new Error('fake kms: unknown ciphertext');
+    if (entry.keyId !== keyId || JSON.stringify(entry.context) !== JSON.stringify(context)) {
+      throw new Error('fake kms: context mismatch');
+    }
+    return entry.plaintext;
+  }
+}
+
+/** A real P-256 keypair standing in for the card — see piv.test.ts. */
+class FakePivCard implements PivCard {
+  private readonly keyPair = createECDH('prime256v1');
+  readonly publicKey: Buffer;
+
+  constructor() {
+    this.keyPair.generateKeys();
+    this.publicKey = this.keyPair.getPublicKey();
+  }
+
+  async getPublicKey(): Promise<Buffer> {
+    return this.publicKey;
+  }
+
+  async ecdh(_slot: string, peerPublicKey: Buffer): Promise<Buffer> {
+    return this.keyPair.computeSecret(peerPublicKey);
+  }
+}
+
+/** Deterministic (internal secret, salt) → secret — see fido2.test.ts. */
+class FakeFido2Authenticator implements Fido2Authenticator {
+  private readonly internalSecret = randomBytes(32);
+  private readonly known = new Set<string>();
+
+  async makeCredential(): Promise<{ credentialId: Buffer }> {
+    const credentialId = randomBytes(16);
+    this.known.add(credentialId.toString('hex'));
+    return { credentialId };
+  }
+
+  async getAssertion(credentialId: Buffer, salt: Buffer): Promise<Buffer> {
+    if (!this.known.has(credentialId.toString('hex'))) throw new Error('fake fido2: unknown credential');
+    return createHmac('sha256', this.internalSecret).update(salt).digest();
+  }
+}
 
 interface Registration {
   name: string;
@@ -27,6 +92,9 @@ interface Registration {
 /** Every provider registered behind the port. Add a row here, not a new file, when a second one lands. */
 const providers: Registration[] = [
   { name: 'passphrase-file', makeProvider: () => new PassphraseFileProvider(() => 'correct horse battery staple', FAST_COST) },
+  { name: 'kms-envelope', makeProvider: () => new KmsEnvelopeProvider(new FakeKmsBackend(), 'aws', 'key-1') },
+  { name: 'yubikey-piv', makeProvider: () => new YubikeyPivProvider(new FakePivCard(), '9d', () => '123456') },
+  { name: 'yubikey-fido2', makeProvider: () => new YubikeyFido2Provider(new FakeFido2Authenticator()) },
 ];
 
 /** The exact shape `keyring.ts` builds — see its `init`/`wrap`/`unwrap` call sites. */

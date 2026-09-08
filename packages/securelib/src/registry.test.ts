@@ -1,6 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { loadProvider } from './registry.js';
+import { loadProvider, type KmsEnvelopeConfig } from './registry.js';
 import { ProviderError } from './provider.js';
+import type { KmsBackend } from './kms-envelope.js';
+
+class FakeKmsBackend implements KmsBackend {
+  async encrypt(rmkBytes: Buffer): Promise<Buffer> {
+    return rmkBytes;
+  }
+  async decrypt(wrappedRmkBytes: Buffer): Promise<Buffer> {
+    return wrappedRmkBytes;
+  }
+}
 
 describe('loadProvider()', () => {
   it('resolves passphrase-file to a real, working provider — no dynamic import needed', async () => {
@@ -12,6 +22,13 @@ describe('loadProvider()', () => {
       custodial: false,
       requiresHardware: false,
     });
+  });
+
+  it('resolves kms-envelope to a real, working provider — no dynamic import needed', async () => {
+    const config: KmsEnvelopeConfig = { backend: new FakeKmsBackend(), backendTag: 'aws', keyId: 'key-1' };
+    const provider = await loadProvider('kms-envelope', config);
+    expect(provider.id).toBe('kms-envelope');
+    expect(provider.describe().custodial).toBe(true);
   });
 
   it('rejects an unknown provider id, distinctly from a missing companion package', async () => {
