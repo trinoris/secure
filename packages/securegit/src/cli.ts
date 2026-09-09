@@ -29,6 +29,7 @@ import {
   addProvider,
   removeProvider,
   createKeyring,
+  findLikelyWindowsHome,
   keyringFromRecoveredGenerations,
   parseKeyId,
   readKeyringFile,
@@ -518,8 +519,33 @@ function renderCommandHelp(name: string, entry: HelpEntry): string {
   return lines.join('\n');
 }
 
-function renderTopLevelHelp(): string {
+/**
+ * Shown once, only on the bare top-level `securegit --help`/`-h`/`help` —
+ * never on a per-command `--help`, never on stdout (which must stay
+ * data-only for a filter tool — 10-cli-contract.md's "stdout carries data
+ * only"), and never on any command Git itself invokes. A splash earns its
+ * place only where output is already 100% for a human who typed `--help`
+ * on purpose; anywhere else it would be noise at best and, on stdout, file
+ * corruption. `--quiet` suppresses it — the rest of the help text (the
+ * part someone's actually asking for) still prints either way.
+ */
+const SPLASH = `
+       o--o  O  o--o
+     o-o  |  |  |  o-o
+   o-o o--o  |  o--o o-o
+   |   |  \\ (*) /  |   |
+   o---o---\\(o)/---o---o
+        \\  /   \\  /
+        / /|_|_|\\ \\
+       / /  | |  \\ \\
+      o--'  / \\  '--o
+
+       T R I N O R I S
+`;
+
+function renderTopLevelHelp(quiet: boolean): string {
   const lines = [
+    ...(quiet ? [] : [SPLASH]),
     'securegit — client-side Git encryption: a transparent clean/smudge filter',
     'that encrypts selected files on your own workstation.',
     '',
@@ -877,11 +903,17 @@ async function cmdInit(args: string[], io: CliIO): Promise<number> {
         const existing = await readConfig(io.cwd);
         await readKeyringFile(resolveKeyringPath(existing.repoId, io.home));
       } catch {
+        const existing = await readConfig(io.cwd).catch(() => null);
+        const candidate = existing !== null ? await findLikelyWindowsHome(existing.repoId).catch(() => null) : null;
         message +=
           '\n  note:   this home directory has no local keyring for that repository — if it was set\n' +
           '          up from a different environment (WSL vs. native Windows, for example), set\n' +
           '          SECUREGIT_HOME to point at it; otherwise `securegit key import-recovery`, or\n' +
-          '          ask an existing member to run `securegit key add-recipient` for you';
+          '          ask an existing member to run `securegit key add-recipient` for you' +
+          (candidate !== null
+            ? `\n  found:  a keyring for this exact repository exists at ${candidate} — if that's yours:\n` +
+              `          export SECUREGIT_HOME=${candidate}`
+            : '');
       }
     }
     io.stderr(message);
@@ -2762,7 +2794,7 @@ export async function runCli(io: CliIO): Promise<number> {
           return EXIT_OK;
         }
         if (topic === undefined) {
-          return showHelp(renderTopLevelHelp());
+          return showHelp(renderTopLevelHelp(io.argv.includes('--quiet')));
         }
         if (!HELP[topic]) {
           io.stderr(`securegit: unknown help topic '${topic}'\n${USAGE}`);

@@ -7,8 +7,8 @@
 // one succeeded.
 // See specs/securegit/05-key-hierarchy.md and 06-key-provider-port.md.
 
-import { mkdir, readFile, rename, writeFile, unlink } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { mkdir, readFile, rename, writeFile, unlink, readdir, stat } from 'node:fs/promises';
+import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { equalCt, keyFingerprint, secret, type Secret } from './crypto.js';
 import { DEFAULT_SCRYPT_N, type KeyProvider, type ProviderState, type WrappedKey } from './provider.js';
@@ -413,18 +413,83 @@ export async function writeKeyringFile(path: string, file: KeyringFile): Promise
   }
 }
 
+/**
+ * Best-effort, read-only, WSL-only: names a *candidate* Windows home for
+ * this exact repository, for an error message to suggest — never opened,
+ * never trusted, never used to unlock anything. `SECUREGIT_HOME` remains
+ * the only way any of this actually takes effect; searching to name a
+ * suggestion is not the same as silently using what it finds; see
+ * 05-key-hierarchy.md's "Key material at rest" for why that line matters.
+ * Returns `null` on anything short of exactly one match — including zero
+ * matches, several equally-plausible ones, not running under WSL, or
+ * `/mnt/c/Users` not existing — because a wrong guess is worse than none.
+ */
+export interface FindLikelyWindowsHomeOptions {
+  /** Overridable for tests only — real callers always get `/mnt/c/Users`. */
+  usersRoot?: string;
+  /** Overridable for tests only — real callers always get `/proc/version`. */
+  versionFile?: string;
+}
+
+export async function findLikelyWindowsHome(
+  repoId: string,
+  opts: FindLikelyWindowsHomeOptions = {},
+): Promise<string | null> {
+  const usersRoot = opts.usersRoot ?? '/mnt/c/Users';
+  const versionFile = opts.versionFile ?? '/proc/version';
+
+  if (process.platform !== 'linux') return null;
+  let version: string;
+  try {
+    version = await readFile(versionFile, 'utf8');
+  } catch {
+    return null;
+  }
+  if (!/microsoft/i.test(version)) return null;
+
+  let entries;
+  try {
+    entries = await readdir(usersRoot, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const matches: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const home = join(usersRoot, entry.name);
+    try {
+      await stat(join(home, '.securegit', 'repos', repoId, 'keyring.json'));
+      matches.push(home);
+    } catch {
+      // not a match for this repository
+    }
+  }
+  return matches.length === 1 ? matches[0]! : null;
+}
+
 export async function readKeyringFile(path: string): Promise<KeyringFile> {
   let raw: string;
   try {
     raw = await readFile(path, 'utf8');
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      const repoId = basename(dirname(path));
+      const candidate = await findLikelyWindowsHome(repoId).catch(() => null);
       throw new KeyringError(
         `securegit: no keyring found at ${path}\n` +
-          `  action: run \`securegit init\` first, or \`securegit key import-recovery\` to restore one\n` +
-          `  note:   if this repository is already set up elsewhere, you may be looking in the wrong\n` +
-          `          home directory (WSL and native Windows have separate ones, for example) —\n` +
-          `          set SECUREGIT_HOME to override where this path is resolved from`,
+          `  action: set SECUREGIT_HOME if this repository's key lives under a different home\n` +
+          `          directory (WSL vs. native Windows, for example); otherwise \`securegit key\n` +
+          `          import-recovery\` to restore one from a recovery export, or ask an existing\n` +
+          `          member to run \`securegit key add-recipient\` for you\n` +
+          `  note:   if none of those apply — this is genuinely the first machine to ever touch\n` +
+          `          this repository, and \`init\` did not finish — it is safe to remove\n` +
+          `          .securegit/config.json and run \`init\` again; don't do that unless you're\n` +
+          `          sure, since a second key under the same repository would make anything\n` +
+          `          already encrypted permanently unreadable` +
+          (candidate !== null
+            ? `\n  found:  a keyring for this exact repository exists at ${candidate} — if that's yours:\n` +
+              `          export SECUREGIT_HOME=${candidate}`
+            : ''),
       );
     }
     throw e;

@@ -270,9 +270,9 @@ English.
 | `--repo <path>` | Operate on a repository other than the current directory. Resolved against `cwd` (relative paths work), and stripped from `argv` before per-command parsing so a path value is never mistaken for a positional argument. Can appear before or after the command name. Missing its path argument exits 4. |
 | `--strict` | `smudge` fails rather than passing ciphertext through ([07](07-unlock-session.md)). |
 | `--json` | Machine-readable output for `status`, `verify` (all three forms), `inspect`, `key list` and `key list-recipients` — the report object itself, `JSON.stringify`'d, straight to stdout. |
-| `--quiet` | Suppress one-shot success confirmations (`io.info`). Never suppresses errors or a report command's actual report (`status`, `identity show`, `verify`, `inspect`, `reencrypt`, `key export-recovery`'s recovery code) — those stay on `stderr` regardless, same as they were never a stdout writer. |
+| `--quiet` | Suppress one-shot success confirmations (`io.info`), and the ASCII splash on bare `securegit --help`. Never suppresses errors or a report command's actual report (`status`, `identity show`, `verify`, `inspect`, `reencrypt`, `key export-recovery`'s recovery code, or the rest of `--help`'s own text) — those stay on `stderr` regardless, same as they were never a stdout writer. |
 | `-v`, `--verbose` | Per-file tracing to stderr, on `clean`/`smudge`/`merge` only. Never includes plaintext, key material, or a passphrase. Parsed like `--strict` — before the `--` separator, not stripped from `argv` globally like `--repo`, so a path beginning with `-` after `--` is never at risk of being mistaken for the flag. |
-| `-h`, `--help` | Show help. Alone (or as the bare word `help`): the full command list, grouped by category, plus global flags. After a command name (`securegit protect --help`) or a subcommand (`securegit key rotate --help`, or `securegit help key rotate`): that command's exact usage, flags, and at least one runnable example — never just prose, so an agent reading it has a concrete invocation to copy rather than one to guess at. Checked the same way as `-v` — before the `--` separator only, so `securegit clean -- --help` (a literal, unusual but legal path) reaches `clean` untouched, never the help renderer. `securegit help --json` (or `--help --json`) prints the same command/flag/example/exit-code data as one machine-readable manifest — a coding agent's entry point into the whole CLI surface without reading source or docs (`src/cli.ts`'s `HELP` table; see [17](17-agent-integration.md)). Always exits 0 (or 4 for an unknown help topic) and never touches a key or the repository config. |
+| `-h`, `--help` | Show help. Alone (or as the bare word `help`): the full command list, grouped by category, plus global flags. After a command name (`securegit protect --help`) or a subcommand (`securegit key rotate --help`, or `securegit help key rotate`): that command's exact usage, flags, and at least one runnable example — never just prose, so an agent reading it has a concrete invocation to copy rather than one to guess at. Checked the same way as `-v` — before the `--` separator only, so `securegit clean -- --help` (a literal, unusual but legal path) reaches `clean` untouched, never the help renderer. `securegit help --json` (or `--help --json`) prints the same command/flag/example/exit-code data as one machine-readable manifest — a coding agent's entry point into the whole CLI surface without reading source or docs (`src/cli.ts`'s `HELP` table; see [17](17-agent-integration.md)). Always exits 0 (or 4 for an unknown help topic) and never touches a key or the repository config. The bare top-level form only (never a per-command `--help`, never `--json`) opens with an ASCII splash — `SPLASH` in `src/cli.ts`, suppressible with `--quiet` — human decoration only, never on stdout and never on any command Git itself invokes. |
 
 ## Implementation: `src/cli.ts`
 
@@ -290,6 +290,60 @@ directly with an in-memory harness, and a single `src/bin.integration.test.ts`
 (which builds the package once, then spawns the real `dist/bin/securegit.js`
 through real pipes) exists only to prove the thin adapter itself is wired
 correctly, not to re-test command logic.
+
+### Interactive secret prompting
+
+`resolvePassphrase()`/`resolvePin()`/`resolveImportRecoverySecrets()`
+(`src/cli.ts`) all fall back to reading `io.stdin` — a design that only
+works correctly when `io.stdin` is actually the secret. For a real
+terminal session with no relevant `SECUREGIT_*` variable set and nothing
+piped in, `bin/securegit.ts` used to hand `runCli()` an empty buffer
+instead (`readStdin()`'s TTY case), which silently became a 0-length
+"passphrase" — a confusing, silent failure rather than a prompt.
+
+`bin/securegit.ts` now prompts instead, for exactly the commands that need
+a secret from stdin — never a blanket "TTY means prompt," because
+`clean`/`smudge`/`encrypt`/`decrypt -` also read `process.stdin`, as file
+content, not a secret; prompting there would silently corrupt that content.
+`interactiveSecretLabels(argv, env)` names which secret(s) a given
+invocation needs, in the order the corresponding `resolve*` function
+expects them, skipping any whose environment variable is already set:
+
+| Command | Prompted when unset | Confirmed by retyping? |
+|---|---|---|
+| `init`, `identity init` | `SECUREGIT_PASSPHRASE` (new) | yes |
+| `unlock` | `SECUREGIT_PASSPHRASE` (existing) | no |
+| `key add-provider passphrase-file` | a new passphrase (never `SECUREGIT_PASSPHRASE` — already the *current* unlock credential for this call) | yes |
+| `key add-provider yubikey-piv` | `SECUREGIT_PIV_PIN` (existing) | no |
+| `key import-recovery` | `SECUREGIT_RECOVERY_CODE` (existing), then a new passphrase — either or both, whichever isn't already set | code: no; passphrase: yes |
+
+`confirm: true` (`SecretPrompt`, `interactiveSecretLabels()`) marks a secret
+being *created* right now — a typo there isn't caught until some later
+unlock, possibly much later, and by then there's no way to know what was
+actually typed, since nothing was ever echoed. Those prompt twice
+(`promptWithConfirm()`), rejecting and re-prompting from the start on any
+mismatch, the same shape `passwd` uses. `confirm: false` marks entering an
+*existing* secret — a typo there fails immediately and obviously (wrong
+passphrase, wrong PIN, a recovery code that fails its own checksum), so
+asking twice would only add friction to a command run often (`unlock`,
+above all) for no real safety gain.
+
+The prompt itself (`promptSecret()`) reads one line in the terminal's raw
+mode with no echo at all — not even asterisks, so nothing about the secret
+is visible, not even its length, matching `ssh`'s and `sudo`'s own prompts.
+Backspace and Ctrl-C are handled; Ctrl-C restores the terminal before
+exiting (130), the same courtesy any other interrupted interactive command
+gets. Piped input (`isTTY` false) and an already-set environment variable
+both bypass this entirely and behave exactly as before — this only replaces
+the specific case that used to silently fail.
+
+`interactiveSecretLabels()` is pure and exported for direct unit testing
+(`src/bin/securegit.test.ts`); `promptSecret()` itself needs a real TTY, so
+it's verified manually against a real pseudo-terminal (prompt appears,
+input isn't echoed, backspace works, the typed value reaches the command
+correctly) rather than by an automated test — the same reasoning
+`readStdin()` beside it has never had one either; see this file's own
+header comment.
 
 ### Exit codes, concretely
 
@@ -336,8 +390,15 @@ deliberately, now built for all five.
 3. **No key material anywhere**, including `--verbose` and crash traces. Key
    objects carry a `toJSON` that returns `"[redacted]"`, so an accidental
    interpolation prints a marker rather than a secret.
-4. **Prompts to `/dev/tty`** when it exists, never to stdout, never at all when
-   `interactive` is false ([06](06-key-provider-port.md)).
+4. **A hardware provider's physical prompt** (a YubiKey touch, a PIN reader)
+   never fires when `interactive` is `false` ([06](06-key-provider-port.md))
+   — the actual mechanism, `ctx.interactive`, gates the provider call
+   itself, not a specific output stream. A passphrase/PIN/recovery-code
+   prompt (below) writes to the real stdout, not `/dev/tty` specifically —
+   which is indistinguishable from `/dev/tty` in the ordinary case (an
+   interactive terminal with nothing redirected), but would go silently
+   missing if stdout were redirected while stdin stayed a TTY. A narrow,
+   acknowledged gap, not a designed choice.
 5. **Errors name the path** they concern. "authentication failed" is unhelpful
    during a 400-file checkout.
 
@@ -368,6 +429,14 @@ deliberately, now built for all five.
 | `securegit clean -- --help` reaches `clean`, not the help renderer (a literal path after `--`) | `src/cli.test.ts` | — | ✅ |
 | `securegit help bogus-topic` exits usage (4) | `src/cli.test.ts` | — | ✅ |
 | `securegit protect` with no pattern applies `DEFAULT_PROTECT_PATTERNS`, printing which ones | `src/cli.test.ts` | — | ✅ |
+| `interactiveSecretLabels()` names the right secret(s), in order, for every command that needs one, and none for commands that read stdin as content | `src/bin/securegit.test.ts` | — | ✅ |
+| `interactiveSecretLabels()` skips a secret whose environment variable is already set (including an empty value counting as unset) | `src/bin/securegit.test.ts` | — | ✅ |
+| `interactiveSecretLabels()` is unconfused by `--repo` appearing before or after the command | `src/bin/securegit.test.ts` | — | ✅ |
+| A real pseudo-terminal: `init`'s passphrase prompt appears, typed input is not echoed, backspace corrects it, and the final value reaches `init` correctly | manual (real PTY) | — | ✅ verified, not automated — see "Interactive secret prompting" above |
+| A real pseudo-terminal: `init`'s confirmation prompt rejects a mismatched retype and re-prompts from the start; a matching pair succeeds | manual (real PTY) | — | ✅ verified, not automated |
+| A real pseudo-terminal: `unlock`'s passphrase prompt is single-entry, no confirmation asked | manual (real PTY) | — | ✅ verified, not automated |
+| `interactiveSecretLabels()` marks exactly the secrets being newly created as `confirm: true`, and existing secrets as `confirm: false` | `src/bin/securegit.test.ts` | — | ✅ |
+| The splash appears on bare `securegit --help`/`-h`/`help`, is suppressed by `--quiet` (rest of the help text stays), and never appears on a per-command `--help`, `help --json`, or any filter/content command's stdout | `src/cli.test.ts` | — | ✅ |
 | `--quiet` suppresses a success confirmation without changing the exit code or side effect | `src/cli.test.ts` | — | ✅ |
 | `--quiet` never suppresses an error message | `src/cli.test.ts` | — | ✅ |
 | `--quiet` never suppresses `status`'s or `identity show`'s human-readable report | `src/cli.test.ts` | — | ✅ |

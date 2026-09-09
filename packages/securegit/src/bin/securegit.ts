@@ -27,15 +27,135 @@ function resolveHome(): string {
 }
 
 async function readStdin(): Promise<Buffer> {
-  // Interactive commands (init/unlock) fall back to an empty passphrase here
-  // when SECUREGIT_PASSPHRASE isn't set and stdin is a TTY — real prompting
-  // (masked input via readline) is a follow-up, not yet wired.
   if (process.stdin.isTTY) return Buffer.alloc(0);
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return Buffer.concat(chunks);
+}
+
+/**
+ * Reads one line of input from the real terminal without echoing it —
+ * not even asterisks, so the terminal reveals nothing at all about the
+ * secret, not even its length (the same choice `ssh`'s and `sudo`'s own
+ * prompts make). Only ever called when `process.stdin.isTTY` is already
+ * true, so raw mode is always available.
+ */
+async function promptSecret(label: string): Promise<string> {
+  const stdin = process.stdin;
+  process.stdout.write(label);
+  return new Promise((resolve) => {
+    let input = '';
+    const onData = (chunk: string): void => {
+      for (const char of chunk) {
+        if (char === '\n' || char === '\r') {
+          stdin.setRawMode?.(false);
+          stdin.pause();
+          stdin.removeListener('data', onData);
+          process.stdout.write('\n');
+          resolve(input);
+          return;
+        }
+        if (char === '') {
+          // Ctrl-C: restore the terminal before exiting, the same courtesy
+          // it gets back after any other interactive command.
+          stdin.setRawMode?.(false);
+          process.stdout.write('\n');
+          process.exit(130);
+        }
+        if (char === '' || char === '\b') {
+          input = input.slice(0, -1);
+          continue;
+        }
+        input += char;
+      }
+    };
+    stdin.setRawMode?.(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    stdin.on('data', onData);
+  });
+}
+
+/**
+ * Which secret(s) `resolvePassphrase()`/`resolvePin()`/
+ * `resolveImportRecoverySecrets()` (`src/cli.ts`) would otherwise silently
+ * read as an empty string from a bare, un-piped TTY — the real gap
+ * `readStdin()` used to leave as a follow-up. Named here, one command at a
+ * time, rather than a blanket "TTY means prompt": `clean`/`smudge`/
+ * `encrypt`/`decrypt -` also read `process.stdin`, but as file content, not
+ * a secret — prompting there would silently corrupt that content instead.
+ * Returns entries in the exact order the corresponding `resolve*` function
+ * expects to find them, one per stdin line; empty when every secret this
+ * command needs already has its environment variable set, or the command
+ * needs none at all. `confirm: true` marks a secret being *created* right
+ * now (init, identity init, a provider's new passphrase, a recovery
+ * import's new passphrase) — a typo there isn't caught until some later
+ * unlock, possibly much later, by which point there's no way to know what
+ * was actually typed, since nothing was ever echoed. `confirm: false`
+ * marks entering an *existing* secret (unlock, a PIV PIN, a recovery
+ * code) — a typo there fails immediately and obviously, so asking twice
+ * would only add friction to a command run often, for no real safety gain.
+ */
+export interface SecretPrompt {
+  label: string;
+  confirm: boolean;
+}
+
+export function interactiveSecretLabels(argv: string[], env: NodeJS.ProcessEnv): SecretPrompt[] {
+  const repoIdx = argv.indexOf('--repo');
+  const [cmd, ...rest] = repoIdx === -1 ? argv : [...argv.slice(0, repoIdx), ...argv.slice(repoIdx + 2)];
+  const hasEnv = (name: string): boolean => {
+    const v = env[name];
+    return v !== undefined && v.length > 0;
+  };
+
+  if (cmd === 'init' || (cmd === 'identity' && rest[0] === 'init')) {
+    return hasEnv('SECUREGIT_PASSPHRASE') ? [] : [{ label: 'New passphrase: ', confirm: true }];
+  }
+  if (cmd === 'unlock') {
+    return hasEnv('SECUREGIT_PASSPHRASE') ? [] : [{ label: 'Passphrase: ', confirm: false }];
+  }
+  if (cmd === 'key' && rest[0] === 'add-provider') {
+    const type = rest.slice(1).find((a) => !a.startsWith('--'));
+    if (type === 'passphrase-file') {
+      return hasEnv('SECUREGIT_PASSPHRASE') ? [] : [{ label: 'New passphrase: ', confirm: true }];
+    }
+    if (type === 'yubikey-piv') {
+      return hasEnv('SECUREGIT_PIV_PIN') ? [] : [{ label: 'YubiKey PIV PIN: ', confirm: false }];
+    }
+    return [];
+  }
+  if (cmd === 'key' && rest[0] === 'import-recovery') {
+    const prompts: SecretPrompt[] = [];
+    if (!hasEnv('SECUREGIT_RECOVERY_CODE')) prompts.push({ label: 'Recovery code: ', confirm: false });
+    if (!hasEnv('SECUREGIT_PASSPHRASE')) prompts.push({ label: 'New passphrase: ', confirm: true });
+    return prompts;
+  }
+  return [];
+}
+
+/** Prompts once, or (`confirm: true`) until two consecutive entries match. */
+async function promptWithConfirm(prompt: SecretPrompt): Promise<string> {
+  if (!prompt.confirm) return promptSecret(prompt.label);
+  for (;;) {
+    const first = await promptSecret(prompt.label);
+    const second = await promptSecret('Confirm passphrase: ');
+    if (first === second) return first;
+    process.stdout.write("securegit: those didn't match — try again\n");
+  }
+}
+
+async function resolveStdin(argv: string[]): Promise<Buffer> {
+  if (!process.stdin.isTTY) return readStdin();
+  const prompts = interactiveSecretLabels(argv, process.env);
+  if (prompts.length === 0) return readStdin();
+  const values: string[] = [];
+  for (const prompt of prompts) {
+    values.push(await promptWithConfirm(prompt));
+  }
+  return Buffer.from(`${values.join('\n')}\n`, 'utf8');
 }
 
 /**
@@ -72,9 +192,10 @@ async function main(): Promise<void> {
     return runFilterProcessMain();
   }
 
-  const stdin = await readStdin();
+  const argv = process.argv.slice(2);
+  const stdin = await resolveStdin(argv);
   const code = await runCli({
-    argv: process.argv.slice(2),
+    argv,
     cwd: process.cwd(),
     env: process.env,
     stdin,

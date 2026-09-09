@@ -199,9 +199,20 @@ Two ways to fix it:
   If you always work on it from WSL, always run `securegit` from WSL.
 - **Or bridge them explicitly**, if you genuinely need both: set
   `SECUREGIT_HOME` to point at the other environment's home directory —
-  from WSL, that's usually `/mnt/c/Users/<you>`. `securegit` never tries to
-  guess or search across this split on its own; an explicit setting is the
-  only way it looks anywhere other than the current environment's own home.
+  from WSL, that's usually `/mnt/c/Users/<you>`.
+
+From WSL specifically, the error message will often name the exact
+directory to use — it looks (read-only, never opening or trusting what it
+finds) for a keyring matching this repository under every account in
+`/mnt/c/Users`, and if precisely one matches, prints the `export
+SECUREGIT_HOME=...` line to run. It says nothing if it finds none, or more
+than one it can't tell apart — `securegit` will suggest a candidate this
+way, but it will never *use* one on its own without you setting
+`SECUREGIT_HOME` yourself. Note it can't help the other direction: your
+Windows username and your WSL username don't have to match (and often
+don't — that's exactly why this searches by content, not by guessing a
+username), but the search itself only ever runs from WSL looking at
+Windows' side, not the reverse.
 
 ## What happens if I lose my laptop, or forget my passphrase?
 

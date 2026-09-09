@@ -17,6 +17,7 @@ import {
   removeProvider,
   writeKeyringFile,
   readKeyringFile,
+  findLikelyWindowsHome,
   type KeyringFile,
 } from './keyring.js';
 
@@ -617,7 +618,24 @@ describe('writeKeyringFile() / readKeyringFile()', () => {
     dir = await mkdtemp(join(tmpdir(), 'securegit-keyring-'));
     const path = join(dir, 'nope.json');
     await expect(readKeyringFile(path)).rejects.toThrow(KeyringError);
-    await expect(readKeyringFile(path)).rejects.toThrow(/no keyring found.*securegit init/s);
+    await expect(readKeyringFile(path)).rejects.toThrow(/no keyring found.*SECUREGIT_HOME/s);
+  });
+
+  it('does not suggest "run init first" — reaching this error already implies config.json exists', async () => {
+    // Every real cli.ts caller only reaches readKeyringFile() after
+    // readConfig()/loadKeys() already succeeded, so that advice is always
+    // circular here — see specs/securegit/05-key-hierarchy.md.
+    dir = await mkdtemp(join(tmpdir(), 'securegit-keyring-'));
+    const path = join(dir, 'nope.json');
+    let message = '';
+    try {
+      await readKeyringFile(path);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).not.toContain('run `securegit init` first');
+    expect(message).toContain('import-recovery');
+    expect(message).toContain('add-recipient');
   });
 
   it('reading a corrupted (non-JSON) file throws a friendly KeyringError', async () => {
@@ -657,5 +675,76 @@ describe('writeKeyringFile() / readKeyringFile()', () => {
 
     const entries = await readdir(dir);
     expect(entries).toEqual(['keyring.json']); // only the directory — no leftover tmp-*
+  });
+});
+
+describe('findLikelyWindowsHome()', () => {
+  let usersRoot: string;
+  let versionFile: string;
+
+  afterEach(async () => {
+    await rm(usersRoot, { recursive: true, force: true });
+    await rm(versionFile, { force: true });
+  });
+
+  async function writeVersionFile(content: string): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'securegit-proc-version-'));
+    const path = join(dir, 'version');
+    await writeFile(path, content);
+    return path;
+  }
+
+  it('returns null when the version file does not mention microsoft (not WSL)', async () => {
+    usersRoot = await mkdtemp(join(tmpdir(), 'securegit-users-'));
+    versionFile = await writeVersionFile('Linux version 6.6.0 (a real Linux box, not WSL)\n');
+    await mkdir(join(usersRoot, 'alice', '.securegit', 'repos', 'repo-a'), { recursive: true });
+    await writeFile(join(usersRoot, 'alice', '.securegit', 'repos', 'repo-a', 'keyring.json'), '{}');
+
+    expect(await findLikelyWindowsHome('repo-a', { usersRoot, versionFile })).toBeNull();
+  });
+
+  it('returns the one matching home when exactly one user has a keyring for this repoId', async () => {
+    usersRoot = await mkdtemp(join(tmpdir(), 'securegit-users-'));
+    versionFile = await writeVersionFile('Linux version 6.6.87.2-microsoft-standard-WSL2\n');
+    await mkdir(join(usersRoot, 'alice', '.securegit', 'repos', 'repo-a'), { recursive: true });
+    await writeFile(join(usersRoot, 'alice', '.securegit', 'repos', 'repo-a', 'keyring.json'), '{}');
+    await mkdir(join(usersRoot, 'bob'), { recursive: true }); // a user with no securegit at all
+
+    const found = await findLikelyWindowsHome('repo-a', { usersRoot, versionFile });
+    expect(found).toBe(join(usersRoot, 'alice'));
+  });
+
+  it('returns null when no user has a keyring for this repoId', async () => {
+    usersRoot = await mkdtemp(join(tmpdir(), 'securegit-users-'));
+    versionFile = await writeVersionFile('Linux version 6.6.87.2-microsoft-standard-WSL2\n');
+    await mkdir(join(usersRoot, 'alice'), { recursive: true });
+
+    expect(await findLikelyWindowsHome('repo-that-exists-nowhere', { usersRoot, versionFile })).toBeNull();
+  });
+
+  it('returns null (never guesses) when more than one user has a keyring for this repoId', async () => {
+    usersRoot = await mkdtemp(join(tmpdir(), 'securegit-users-'));
+    versionFile = await writeVersionFile('Linux version 6.6.87.2-microsoft-standard-WSL2\n');
+    for (const user of ['alice', 'bob']) {
+      await mkdir(join(usersRoot, user, '.securegit', 'repos', 'repo-a'), { recursive: true });
+      await writeFile(join(usersRoot, user, '.securegit', 'repos', 'repo-a', 'keyring.json'), '{}');
+    }
+
+    expect(await findLikelyWindowsHome('repo-a', { usersRoot, versionFile })).toBeNull();
+  });
+
+  it('returns null when the users directory does not exist at all', async () => {
+    versionFile = await writeVersionFile('Linux version 6.6.87.2-microsoft-standard-WSL2\n');
+    usersRoot = join(tmpdir(), 'securegit-users-does-not-exist');
+
+    expect(await findLikelyWindowsHome('repo-a', { usersRoot, versionFile })).toBeNull();
+  });
+
+  it('a real, unknown repoId against this actual machine is always null (never a false positive)', async () => {
+    // No injected options: exercises the real /mnt/c/Users, /proc/version
+    // path this function actually uses in production. Read-only and safe
+    // regardless of platform — a fabricated repoId cannot collide with a
+    // real one.
+    expect(await findLikelyWindowsHome('00000000000000000000000000000000')).toBeNull();
   });
 });

@@ -194,13 +194,55 @@ Every `~/.securegit/...` path above resolves `~` from `os.homedir()` —
 person genuinely have *different* home directories across environments —
 WSL (`/home/<user>`) versus native Windows (`C:\Users\<user>`, itself
 reachable from WSL at `/mnt/c/Users/<user>`) is the sharp everyday case, but
-any dual-boot or multiple-account setup has the identical shape. Deliberately
-not auto-detected or silently tried as a fallback: guessing a second
-candidate home to search would be exactly the kind of implicit,
+any dual-boot or multiple-account setup has the identical shape.
+
+Deliberately not auto-applied: `securegit` never picks a candidate home on
+its own and starts trusting it — that would be exactly the kind of implicit,
 unaudited key-search path the rest of this design goes out of its way to
 avoid (same reasoning as [07](07-unlock-session.md)'s session-file
-permission check never trying to be "helpful" about an unsafe file). An
-explicit environment variable is the only way in.
+permission check never trying to be "helpful" about an unsafe file). Naive
+auto-detection would also just be wrong in the case that motivated this:
+the WSL username and the Windows username for the same person are not
+required to match (`whoami` inside WSL has no relationship to
+`%USERNAME%`), so guessing `/mnt/c/Users/$(whoami)` specifically would have
+picked the wrong directory, or none, for exactly the person this exists to
+help.
+
+What *is* built, and stays firmly on the read-only side of that line:
+`findLikelyWindowsHome()` (`src/keyring.ts`), consulted only from inside a
+"no keyring found" error message. WSL-gated (checks `/proc/version` for
+`microsoft`), it lists every directory under `/mnt/c/Users` and `stat`s each
+one for a keyring matching this *exact* `repoId` — never opening, parsing,
+or unwrapping anything it finds, and returning nothing at all unless
+precisely one directory matches (zero or several candidates are both
+treated as "say nothing," since a wrong suggestion is worse than none). A
+match only ever becomes a printed suggestion — "if that's yours: `export
+SECUREGIT_HOME=...`" — never something the running command uses for itself.
+Searching for what to *suggest* and silently *using* what's found are
+different things; only the first happens without being asked.
+
+**A chicken-and-egg wording bug this exact scenario surfaced**:
+`readKeyringFile()`'s "no keyring found" message used to lead with `run
+securegit init first`. Every real `cli.ts` caller (`key list`, `key
+rotate`, `key add-provider`, `key add-recipient`, `key export-recovery`)
+only reaches this error *after* `readConfig()`/`loadKeys()` already
+succeeded — reaching `readKeyringFile` at all is proof `config.json`
+already exists. So that advice was never actually reachable-and-correct:
+running `init` again always hits its own "already initialised" refusal
+first, producing exactly the confusing loop it looks like — one command
+says "run init," the other refuses to. The message now leads with the
+options that are actually available (`SECUREGIT_HOME`, `key
+import-recovery`, `key add-recipient`), and mentions removing
+`config.json` and starting over only as an explicitly hedged last resort
+for the one case that's still genuinely possible: `init`'s own two-step
+sequence (`initConfig()` succeeds, then `createKeyring()`/
+`writeKeyringFile()` fails or is interrupted) leaving an orphaned config
+with no keyring anywhere, on the very first machine that ever touched the
+repository. Recreating a keyring is safe *only* in that narrow case —
+never once any generation has actually been used, since `createKeyring()`
+always generates a fresh, independently random RMK
+([Key material at rest](#key-material-at-rest) above), and a second one
+under the same `repoId` would silently fork the repository's key lineage.
 
 Nothing in this table places unwrapped key material inside the repository.
 `initConfig()` (`src/config.ts`) now refuses this mistake at the source: an
@@ -230,6 +272,10 @@ on top of, not instead of, `verify`'s own equivalent check.
 | `readKeyringFile()` on corrupted (non-JSON) content throws a friendly `KeyringError` | `src/keyring.test.ts` | — | ✅ |
 | `SECUREGIT_HOME` overrides `os.homedir()` for where the keyring is resolved, verified against the real compiled binary | `src/bin.integration.test.ts` | — | ✅ |
 | `init` on an already-initialised repo names `SECUREGIT_HOME` when this home has no local keyring for it, and stays plain when it does | `src/cli.test.ts` | — | ✅ |
+| `readKeyringFile()`'s "no keyring found" message never suggests `run securegit init first` — every real caller reaches it only after `readConfig()`/`loadKeys()` already succeeded, making that advice circular; it leads with `SECUREGIT_HOME`/`key import-recovery`/`key add-recipient` instead | `src/keyring.test.ts` | — | ✅ |
+| `findLikelyWindowsHome()` returns null when not WSL, when zero or several users match, or when the users directory doesn't exist | `src/keyring.test.ts` | — | ✅ |
+| `findLikelyWindowsHome()` returns the one matching user's home when exactly one has a keyring for the given `repoId` | `src/keyring.test.ts` | — | ✅ |
+| A real, fabricated `repoId` against the actual machine's `/mnt/c/Users`/`/proc/version` never false-positives | `src/keyring.test.ts` | — | ✅ |
 | `setBindPath()` flips exactly `bindPath`, leaving `repoId`/`padTo`/`version` untouched, atomically | `src/config.test.ts` | — | ✅ |
 | Keyring inside a working tree is refused at `init` | `src/config.test.ts` | — | ✅ |
 | Keyring file is created with mode `0600` | `src/keyring.test.ts` | — | ✅ |

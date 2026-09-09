@@ -1389,7 +1389,12 @@ describe('key add-provider / key remove-provider / key list / key list-recipient
     try {
       const result = await h.run(['key', 'list'], { home: otherHome });
       expect(result).toBe(2);
-      expect(h.stderrText()).toContain('run `securegit init` first');
+      // Not "run init first" — reaching this message at all means config.json
+      // already exists (readConfig succeeded before readKeyringFile ran),
+      // so that advice would be circular. See specs/securegit/05-key-hierarchy.md.
+      expect(h.stderrText()).not.toContain('run `securegit init` first');
+      expect(h.stderrText()).toContain('SECUREGIT_HOME');
+      expect(h.stderrText()).toContain('import-recovery');
       expect(h.stderrText()).not.toContain('ENOENT');
     } finally {
       await rm(otherHome, { recursive: true, force: true });
@@ -2709,7 +2714,35 @@ describe('help', () => {
       expect(h.stderrText()).toContain('Global flags:');
       expect(h.stderrText()).toContain('Environment variables:');
       expect(h.stderrText()).toContain('SECUREGIT_HOME');
+      expect(h.stderrText()).toContain('T R I N O R I S');
     }
+  });
+
+  it('--quiet suppresses the splash but not the rest of the top-level help', async () => {
+    const h = harness();
+    expect(await h.run(['--help', '--quiet'])).toBe(0);
+    expect(h.stderrText()).not.toContain('T R I N O R I S');
+    expect(h.stderrText()).toContain('usage: securegit <command>');
+    expect(h.stderrText()).toContain('Global flags:');
+  });
+
+  it('the splash never appears on a per-command --help', async () => {
+    const h = harness();
+    await h.run(['protect', '--help']);
+    expect(h.stderrText()).not.toContain('T R I N O R I S');
+  });
+
+  it('the splash never appears in help --json', async () => {
+    const h = harness();
+    await h.run(['help', '--json']);
+    expect(h.stdoutText()).not.toContain('T R I N O R I S');
+  });
+
+  it('the splash never appears on stdout for a real filter/content command', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['encrypt', '-', '--out', '-'], { stdin: Buffer.from('hello') });
+    expect(h.stdoutText()).not.toContain('T R I N O R I S');
   });
 
   it('`securegit <command> --help` prints that command\'s usage, flags and an example', async () => {
