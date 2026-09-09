@@ -101,6 +101,29 @@ describe('init', () => {
     expect(await readFile(join(dir, '.securegit', 'config.json'), 'utf8')).toBe(before);
   });
 
+  it('the second-run message stays plain when this home already has a local keyring', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['init']);
+    expect(h.stderrText()).not.toContain('SECUREGIT_HOME');
+  });
+
+  it('the second-run message names SECUREGIT_HOME when this home has no local keyring for the repo', async () => {
+    // The WSL/native-Windows shape: config.json exists (shared, cwd-relative)
+    // but this specific home never ran init or holds a copy of the keyring.
+    const h = harness();
+    await h.run(['init']);
+    const otherHome = await mkdtemp(join(tmpdir(), 'securegit-cli-init-keyless-home-'));
+    try {
+      expect(await h.run(['init'], { home: otherHome })).toBe(4);
+      expect(h.stderrText()).toContain('already initialised');
+      expect(h.stderrText()).toContain('SECUREGIT_HOME');
+      expect(h.stderrText()).toContain('key import-recovery');
+    } finally {
+      await rm(otherHome, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a passphrase under 12 characters', async () => {
     const h = harness({ env: { SECUREGIT_PASSPHRASE: 'short' } });
     expect(await h.run(['init'])).toBe(4);

@@ -229,6 +229,7 @@ on top of, not instead of, `verify`'s own equivalent check.
 | `readKeyringFile()` on a missing path throws a friendly `KeyringError` naming `securegit init`, not a raw `ENOENT` | `src/keyring.test.ts` | — | ✅ |
 | `readKeyringFile()` on corrupted (non-JSON) content throws a friendly `KeyringError` | `src/keyring.test.ts` | — | ✅ |
 | `SECUREGIT_HOME` overrides `os.homedir()` for where the keyring is resolved, verified against the real compiled binary | `src/bin.integration.test.ts` | — | ✅ |
+| `init` on an already-initialised repo names `SECUREGIT_HOME` when this home has no local keyring for it, and stays plain when it does | `src/cli.test.ts` | — | ✅ |
 | `setBindPath()` flips exactly `bindPath`, leaving `repoId`/`padTo`/`version` untouched, atomically | `src/config.test.ts` | — | ✅ |
 | Keyring inside a working tree is refused at `init` | `src/config.test.ts` | — | ✅ |
 | Keyring file is created with mode `0600` | `src/keyring.test.ts` | — | ✅ |

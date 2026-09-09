@@ -864,8 +864,28 @@ async function cmdInit(args: string[], io: CliIO): Promise<number> {
   try {
     config = await initConfig(io.cwd, { bindPath, home: io.home, ...(padTo !== undefined ? { padTo } : {}) });
   } catch (e) {
-    io.stderr((e as Error).message);
-    return e instanceof ConfigError ? EXIT_USAGE : EXIT_USAGE;
+    let message = (e as Error).message;
+    // "Already initialised" only means config.json exists — that file is
+    // inside the repo (cwd-relative), so it's found identically from any
+    // environment touching this same physical repo. It says nothing about
+    // whether *this* home directory has a usable local keyring (home-
+    // relative, never shared the same way) — check separately, so this
+    // error and `key list`'s "no keyring found" give consistent guidance
+    // instead of looking like two unrelated problems.
+    if (e instanceof ConfigError && message.includes('already initialised')) {
+      try {
+        const existing = await readConfig(io.cwd);
+        await readKeyringFile(resolveKeyringPath(existing.repoId, io.home));
+      } catch {
+        message +=
+          '\n  note:   this home directory has no local keyring for that repository — if it was set\n' +
+          '          up from a different environment (WSL vs. native Windows, for example), set\n' +
+          '          SECUREGIT_HOME to point at it; otherwise `securegit key import-recovery`, or\n' +
+          '          ask an existing member to run `securegit key add-recipient` for you';
+      }
+    }
+    io.stderr(message);
+    return EXIT_USAGE;
   }
 
   const passphrase = resolvePassphrase(io);

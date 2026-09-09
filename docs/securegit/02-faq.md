@@ -184,6 +184,15 @@ was written under Windows' home directory. Running `securegit key list` (or
 under WSL's home directory instead — finds nothing there, and says so.
 Nothing is lost; you're just looking in the other room.
 
+Running `securegit init` again from the "other" environment won't fix it
+either, and this is worth understanding rather than fighting: `init` checks
+`.securegit/config.json`, which — like the rest of your repository — is the
+same file from either environment, so it correctly says the repository is
+already set up. It has no way to know your *current* home lacks a keyring
+until it checks specifically, which it now does: the "already initialised"
+message names this exact situation and suggests `SECUREGIT_HOME` too, if
+that's the cause.
+
 Two ways to fix it:
 
 - **Simplest: pick one environment for this repository and stay there.**
