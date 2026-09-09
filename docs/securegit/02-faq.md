@@ -267,6 +267,60 @@ uploaded anywhere.
 
 **Details:** [specs/securegit/01-threat-model.md](../../specs/securegit/01-threat-model.md)
 
+## My CI pipeline needs to actually build/test the files I've protected — how?
+
+Give it its own key, the same way you'd give a teammate one. A CI runner
+that holds a key is a **trusted machine identity**, not a special case —
+same mechanism, same guarantees, same ability to revoke it later without
+touching anyone else's access.
+
+**On a machine you control (not the CI job itself), once:**
+
+```sh
+SECUREGIT_PASSPHRASE=<a fresh passphrase, used only for this key> \
+  securegit identity init --label ci
+securegit identity show   # copy the public key it prints
+```
+
+**From a machine that already has access, add it as a recipient and push:**
+
+```sh
+securegit key add-recipient <the ci public key> --label ci
+git add .securegit/recipients && git commit && git push
+```
+
+**Store two things in your CI provider's own secret store — never commit
+them:** the CI identity file's content (`~/.securegit/identity.json` from
+the first step) and the passphrase you generated for it.
+
+**In the CI job itself, before any step that needs plaintext:**
+
+```sh
+mkdir -p ~/.securegit
+echo "$SECUREGIT_CI_IDENTITY" > ~/.securegit/identity.json
+SECUREGIT_PASSPHRASE="$SECUREGIT_CI_PASSPHRASE" securegit unlock
+git rm --cached -r -q . && git checkout HEAD -- .
+```
+
+That last line isn't optional busywork — Git's own stat-cache sees a
+file already checked out as ciphertext and assumes it "already matches
+the index," so it silently skips re-running `smudge` even after you've
+just unlocked. Emptying the index first removes that shortcut, so the
+`checkout HEAD` that follows actually re-materializes every file through
+the now-unlocked filter. This is the same technique git-crypt and git-lfs
+document for the identical problem — not a securegit-specific workaround.
+
+Worth being honest about what this does and doesn't change: your CI
+pipeline is now a machine that *can* read the plaintext, same as a
+teammate's laptop — this doesn't make encrypted files invisible to CI,
+it makes CI another trusted holder of a key. What you *do* get: that
+access is its own key, not a copy of any human's, so losing control of
+the CI provider (or retiring the pipeline) only ever means revoking one
+key (`key remove-recipient` + `rotate` + `reencrypt`), never rotating
+everyone else's.
+
+**Details:** [specs/securegit/07-unlock-session.md](../../specs/securegit/07-unlock-session.md), [specs/securegit/08-multi-recipient.md](../../specs/securegit/08-multi-recipient.md)
+
 ## Are the `.gitattributes` file and the `.securegit` folder themselves encrypted?
 
 No to both, but for two different reasons.
