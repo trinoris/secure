@@ -52,6 +52,15 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run build:securelib
+      # securelib's own registry.test.ts genuinely dynamic-imports the
+      # real, installed @trinoris/securelib-piv/-fido2 packages (see that
+      # file's own comment) to prove loadProvider()'s dynamic-import path
+      # against real companion packages, not just a mock — a real, if
+      # inverted, *test-time* dependency the package-dependency graph
+      # itself doesn't have. Both must be built before this job's own
+      # test:coverage step below, or that test fails with "not installed".
+      - run: npm run build:securelib-piv
+      - run: npm run build:securelib-fido2
       - run: npm run typecheck --workspace=packages/securelib
       # `test:coverage` runs the exact same tests `test` would, plus v8
       # coverage instrumentation — this package's own vitest.config.ts sets
