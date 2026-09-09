@@ -88,6 +88,7 @@ results published from an actual run every night.
 
 ```sh
 securegit init
+securegit install
 securegit protect config/production.json
 git add . && git commit -m "hello" && git push
 ```
@@ -152,6 +153,10 @@ specs/securegit/README.md#why-this-and-not-git-crypt--sops--age).
 - **[docs/securegit/04-keys-usage.md](docs/securegit/04-keys-usage.md)**
   — every kind of "key" this project talks about, in plain terms: what
   each one is, where it lives, and what protects it.
+- **[docs/securegit/05-cli-guide.md](docs/securegit/05-cli-guide.md)** —
+  the commands you'll actually type, grouped by task, with working
+  examples — setup, sharing access, rotation, recovery, and what each
+  exit code means.
 
 ## Chaos sandbox
 
