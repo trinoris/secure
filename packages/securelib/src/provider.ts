@@ -144,7 +144,8 @@ export class PassphraseFileProvider implements KeyProvider {
     const passphrase = await this.getPassphrase();
     if (passphrase.length < MIN_PASSPHRASE_LEN) {
       throw new ProviderError(
-        `passphrase must be at least ${MIN_PASSPHRASE_LEN} characters`,
+        `passphrase must be at least ${MIN_PASSPHRASE_LEN} characters (got ${passphrase.length})\n` +
+          `  action: run the same command again with a longer passphrase`,
       );
     }
     return {

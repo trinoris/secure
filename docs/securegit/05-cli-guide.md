@@ -8,6 +8,12 @@ hood) see
 Nothing here should ever disagree with that page; if it does, that page is
 right.
 
+Every command also documents itself: `securegit help` lists everything;
+`securegit <command> --help` or `securegit help <command>` (works for a
+subcommand too, e.g. `securegit key rotate --help`) gives that command's
+exact flags and a runnable example. `securegit help --json` prints the same
+information as one machine-readable manifest.
+
 ## Setting up a repository
 
 Three commands, in this order, once per repository:
@@ -73,6 +79,21 @@ added you as a recipient (see below), `unlock` tries that path
 automatically — no separate command needed. If neither a local key nor a
 recipient entry exists for you, `unlock` tells you exactly which of the
 two setup paths to take.
+
+**Using WSL and native Windows for the same repository?** They have
+separate home directories — `securegit init` from one is invisible to the
+other, even for the exact same clone, because your key lives under `~/
+.securegit/`, and `~` means something different in each. You'll see this as
+`no keyring found at ...`, even right after successfully running `init`.
+Pick one environment and stick to it, or bridge them explicitly:
+
+```sh
+export SECUREGIT_HOME=/mnt/c/Users/<you>   # from WSL, points at Windows' home
+```
+
+`securegit` never guesses across this split on its own — see
+[02-faq.md](02-faq.md#i-use-both-wsl-and-native-windows-for-the-same-repository--why-does-securegit-say-no-keyring-found)
+for why.
 
 ## Checking on things
 
@@ -217,6 +238,26 @@ repository involved — useful for testing, or for encrypting something
 that was never meant to live in Git at all. `-` works as `stdin`/`stdout`
 for either command. `inspect` reads the header only (generation,
 algorithm, flags) without needing a key.
+
+## Working with AI coding agents
+
+If Claude Code, Cursor, GitHub Copilot, Kiro, Codex, Gemini CLI, or
+Antigravity is going to work in this repository, give it securegit's
+workflow up front instead of hoping it infers `install` and `verify` from
+context:
+
+```sh
+securegit agent install
+```
+
+Writes each tool's own instruction-file format (a Claude Skill, a Cursor
+Rule, a Copilot instructions file, a Kiro steering doc, `AGENTS.md`,
+`GEMINI.md`, `.agents/rules/securegit.md`) — one shared set of guidance,
+wrapped per tool. Safe to re-run; pass specific target names to limit which
+files get written (`securegit agent install claude cursor`), or `agent list`
+to see the paths without writing anything. See
+[specs/securegit/17-agent-integration.md](../../specs/securegit/17-agent-integration.md)
+for exactly what gets written and why.
 
 ## Useful global flags
 

@@ -188,6 +188,20 @@ here at `init` and, per above, only ever changed again through `key rotate
 | RMK wrapped to a recipient | `.securegit/recipients/*.json` **in the repo** | X25519 public-key encryption ([08](08-multi-recipient.md)) |
 | RMK wrapped to a recovery code | an exported file, wherever the user puts it | high-entropy code, held offline ([09](09-rotation-recovery.md)) |
 
+Every `~/.securegit/...` path above resolves `~` from `os.homedir()` —
+`SECUREGIT_HOME`, when set, overrides that (`src/bin/securegit.ts`'s
+`resolveHome()`). This exists because "the same" repository and "the same"
+person genuinely have *different* home directories across environments —
+WSL (`/home/<user>`) versus native Windows (`C:\Users\<user>`, itself
+reachable from WSL at `/mnt/c/Users/<user>`) is the sharp everyday case, but
+any dual-boot or multiple-account setup has the identical shape. Deliberately
+not auto-detected or silently tried as a fallback: guessing a second
+candidate home to search would be exactly the kind of implicit,
+unaudited key-search path the rest of this design goes out of its way to
+avoid (same reasoning as [07](07-unlock-session.md)'s session-file
+permission check never trying to be "helpful" about an unsafe file). An
+explicit environment variable is the only way in.
+
 Nothing in this table places unwrapped key material inside the repository.
 `initConfig()` (`src/config.ts`) now refuses this mistake at the source: an
 optional `home` option, always passed by `cli.ts`'s `cmdInit`, checks
@@ -212,6 +226,9 @@ on top of, not instead of, `verify`'s own equivalent check.
 | `bindPath` is recorded in `flags` and honoured on decrypt | `src/envelope.test.ts` | — | ✅ |
 | Changing `bindPath` in config does not silently break old blobs | `src/filter.test.ts` | — | ✅ (`unseal()` has no `bindPath` parameter at all — decrypt always uses each envelope's own recorded flag, structurally, never a caller's "current config" value; `keyring.ts` has no bindPath concept to test in the first place) |
 | `key rotate --bind-path` rotates, flips config `bindPath` to `true`, and content encrypted afterward is genuinely path-bound (same content at two paths diverges, having converged before) | `src/cli.test.ts` | `repo-protected/` | ✅ |
+| `readKeyringFile()` on a missing path throws a friendly `KeyringError` naming `securegit init`, not a raw `ENOENT` | `src/keyring.test.ts` | — | ✅ |
+| `readKeyringFile()` on corrupted (non-JSON) content throws a friendly `KeyringError` | `src/keyring.test.ts` | — | ✅ |
+| `SECUREGIT_HOME` overrides `os.homedir()` for where the keyring is resolved, verified against the real compiled binary | `src/bin.integration.test.ts` | — | ✅ |
 | `setBindPath()` flips exactly `bindPath`, leaving `repoId`/`padTo`/`version` untouched, atomically | `src/config.test.ts` | — | ✅ |
 | Keyring inside a working tree is refused at `init` | `src/config.test.ts` | — | ✅ |
 | Keyring file is created with mode `0600` | `src/keyring.test.ts` | — | ✅ |

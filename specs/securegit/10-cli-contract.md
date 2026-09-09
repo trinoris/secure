@@ -149,7 +149,7 @@ only the one thing this command reports, unlike `key list`'s
 |---|---|
 | `securegit init [--bind-path] [--pad-to <n>]` | Create `.securegit/config.json`, generate `repoId`, generation 1. Refuses outside a repository, or if already initialised. `--pad-to` ([14](14-metadata-leakage.md)) sets `padTo`, a non-negative integer, `0` (disabled) by default; refused if negative or non-numeric. Neither can be changed by re-running `init` (it refuses a second run) — `bindPath` has its own dedicated update path, `key rotate --bind-path`, below; `padTo` doesn't need one ([05](05-key-hierarchy.md), [14](14-metadata-leakage.md)). |
 | `securegit install [--process] [--no-required] [--bin <cmd>]` | Write `.git/config` filter, diff and merge driver entries ([02](02-git-integration.md), [12](12-diff-merge.md)). Idempotent. `--bin` overrides the command Git invokes (default: the resolved `securegit` on `PATH`) — for a global install where `securegit` is not literally the right invocation on every machine (e.g. `node /path/to/securegit.js`, or a version-pinned wrapper), and for the integration test suite, which cannot assume `securegit` is on `PATH` for a binary that was just built. Not meant to be reached for by a normal user. |
-| `securegit protect <pattern>…` | Add patterns to `.gitattributes` with `filter`, `diff`, `merge` and `-text`, keeping the `.securegit/**` exclusion last. |
+| `securegit protect [<pattern>…]` | Add patterns to `.gitattributes` with `filter`, `diff`, `merge` and `-text`, keeping the `.securegit/**` exclusion last. No pattern given protects `DEFAULT_PROTECT_PATTERNS` (`src/install.ts`) instead — a conservative, filename-shape-only default set (`.env`, `.env.*`, `*.pem`, `*.key`, `*.secret`, `*.secrets`, `secrets/**`) for a one-command fast setup; the confirmation printed afterward names exactly which patterns were applied. |
 | `securegit unprotect <pattern>…` | Remove patterns from `.gitattributes` only — `.gitignore`'s residue entries are left alone. Warns that already-committed blobs stay encrypted until re-committed. A pattern that was never protected is a silent no-op (exit 0), and doesn't touch the file. |
 | `securegit status [--json]` | The diagnostic report in [07](07-unlock-session.md). `--json`: `{repository, repoId, bindPath, padTo, locked, generation, metadata, recoveryPaths}` to stdout — `metadata` is [14](14-metadata-leakage.md)'s M1–M12 report, `recoveryPaths` is [13](13-verify.md)'s single-recovery-path advisory (`{paths, hasExport, warn}`, or `null` with no local keyring); the human-readable form prints `padTo` alongside `bindPath`, a pointer to `status --json` for the M1–M12 detail, and a `⚠` line when `recoveryPaths.warn` is true. |
 | `securegit verify [--history\|--access] [--json]` | The audit in [13](13-verify.md). Implemented: the base form (config + index checks, leak/advice scan), `--history` (a real commit walk — CI-tier speed, not pre-commit), `--access` (who can read this repository), and `--json` for all three. |
@@ -272,6 +272,7 @@ English.
 | `--json` | Machine-readable output for `status`, `verify` (all three forms), `inspect`, `key list` and `key list-recipients` — the report object itself, `JSON.stringify`'d, straight to stdout. |
 | `--quiet` | Suppress one-shot success confirmations (`io.info`). Never suppresses errors or a report command's actual report (`status`, `identity show`, `verify`, `inspect`, `reencrypt`, `key export-recovery`'s recovery code) — those stay on `stderr` regardless, same as they were never a stdout writer. |
 | `-v`, `--verbose` | Per-file tracing to stderr, on `clean`/`smudge`/`merge` only. Never includes plaintext, key material, or a passphrase. Parsed like `--strict` — before the `--` separator, not stripped from `argv` globally like `--repo`, so a path beginning with `-` after `--` is never at risk of being mistaken for the flag. |
+| `-h`, `--help` | Show help. Alone (or as the bare word `help`): the full command list, grouped by category, plus global flags. After a command name (`securegit protect --help`) or a subcommand (`securegit key rotate --help`, or `securegit help key rotate`): that command's exact usage, flags, and at least one runnable example — never just prose, so an agent reading it has a concrete invocation to copy rather than one to guess at. Checked the same way as `-v` — before the `--` separator only, so `securegit clean -- --help` (a literal, unusual but legal path) reaches `clean` untouched, never the help renderer. `securegit help --json` (or `--help --json`) prints the same command/flag/example/exit-code data as one machine-readable manifest — a coding agent's entry point into the whole CLI surface without reading source or docs (`src/cli.ts`'s `HELP` table; see [17](17-agent-integration.md)). Always exits 0 (or 4 for an unknown help topic) and never touches a key or the repository config. |
 
 ## Implementation: `src/cli.ts`
 
@@ -362,6 +363,11 @@ deliberately, now built for all five.
 | No error message contains plaintext bytes | `src/cli.test.ts` | `blobs/` | ✅ |
 | `--repo` operates on the named repository, before or after the command, relative paths resolve against `cwd` | `src/cli.test.ts` | — | ✅ |
 | `--repo` with no path argument exits 4 | `src/cli.test.ts` | — | ✅ |
+| `securegit --help` / `-h` / `help` (bare) prints the full command list; `securegit <command> --help` and `securegit help <command>` print that command's usage, flags and an example; both forms work for `key`/`identity` subcommands | `src/cli.test.ts` | — | ✅ |
+| `securegit help --json` prints a machine-readable manifest covering every command in `HELP` | `src/cli.test.ts` | — | ✅ |
+| `securegit clean -- --help` reaches `clean`, not the help renderer (a literal path after `--`) | `src/cli.test.ts` | — | ✅ |
+| `securegit help bogus-topic` exits usage (4) | `src/cli.test.ts` | — | ✅ |
+| `securegit protect` with no pattern applies `DEFAULT_PROTECT_PATTERNS`, printing which ones | `src/cli.test.ts` | — | ✅ |
 | `--quiet` suppresses a success confirmation without changing the exit code or side effect | `src/cli.test.ts` | — | ✅ |
 | `--quiet` never suppresses an error message | `src/cli.test.ts` | — | ✅ |
 | `--quiet` never suppresses `status`'s or `identity show`'s human-readable report | `src/cli.test.ts` | — | ✅ |
@@ -428,3 +434,6 @@ deliberately, now built for all five.
 - [11](11-filter-process.md) — `filter-process`
 - [12](12-diff-merge.md) — `merge`, and why exit 1 has two meanings there
 - [13](13-verify.md) — `verify` and exit code 5
+- [17](17-agent-integration.md) — `securegit agent install`, and the `HELP`
+  table this spec's help system and that spec's shared instruction body must
+  both stay consistent with

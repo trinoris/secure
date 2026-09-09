@@ -198,6 +198,23 @@ export interface ProtectOptions {
 }
 
 /**
+ * `securegit protect` with no pattern given falls back to this list, for a
+ * one-command fast setup. Filename/extension shapes only — no directory
+ * assumptions like the illustrative `config/production.*` in
+ * 02-git-integration.md, since most repositories don't share that layout
+ * and an unmatched pattern in `.gitattributes` is a harmless no-op anyway.
+ *
+ * Deliberately errs broad, not narrow: encrypting a file that turns out not
+ * to be sensitive costs nothing but an extra decrypt on read (still plain
+ * Git otherwise); missing one that *was* sensitive costs a real leak.
+ * `.env.*` covers `.env.local`/`.env.production` etc. at the price of also
+ * matching `.env.example` — an explicit, named tradeoff, not an oversight;
+ * `securegit unprotect <pattern>` is the escape hatch for any default that
+ * doesn't fit a given repository.
+ */
+export const DEFAULT_PROTECT_PATTERNS = ['.env', '.env.*', '*.pem', '*.key', '*.secret', '*.secrets', 'secrets/**'];
+
+/**
  * Protects one or more path patterns: writes them into `.gitattributes` with
  * the filter, diff driver and `-text`, keeping the `.securegit/**` exclusion
  * last, and (by default) adds `.gitignore` entries for the plaintext residue

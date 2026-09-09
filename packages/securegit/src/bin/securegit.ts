@@ -7,6 +7,25 @@ import { homedir } from 'node:os';
 import { runCli, runFilterProcess } from '../cli.js';
 import { installStdoutGuard } from '../process.js';
 
+/**
+ * `SECUREGIT_HOME`, when set, overrides `os.homedir()` for every path this
+ * tool resolves under `~/.securegit/` (keyring, session, identity). Exists
+ * for the same reason `GNUPGHOME` exists for gpg: `os.homedir()` is
+ * genuinely a different filesystem location per environment even for "the
+ * same" machine and the same repository — WSL (`/home/<user>`) and native
+ * Windows (`C:\Users\<user>`, reachable from WSL at `/mnt/c/Users/<user>`)
+ * are the sharpest everyday case, but any dual-boot or multi-account setup
+ * has the identical shape. `securegit` never guesses across this split on
+ * its own (silently trying a second candidate home would be exactly the
+ * kind of implicit, unaudited key-search path the rest of this tool goes
+ * out of its way to avoid) — an explicit override is the only way in. See
+ * docs/securegit/02-faq.md and specs/securegit/05-key-hierarchy.md.
+ */
+function resolveHome(): string {
+  const override = process.env.SECUREGIT_HOME;
+  return override !== undefined && override.length > 0 ? override : homedir();
+}
+
 async function readStdin(): Promise<Buffer> {
   // Interactive commands (init/unlock) fall back to an empty passphrase here
   // when SECUREGIT_PASSPHRASE isn't set and stdin is a TTY — real prompting
@@ -34,7 +53,7 @@ async function runFilterProcessMain(): Promise<void> {
     const code = await runFilterProcess({
       cwd: process.cwd(),
       env: process.env,
-      home: homedir(),
+      home: resolveHome(),
       onData: (handler) => process.stdin.on('data', handler),
       onEnd: (handler) => process.stdin.on('end', handler),
       write: guard.write,
@@ -59,7 +78,7 @@ async function main(): Promise<void> {
     cwd: process.cwd(),
     env: process.env,
     stdin,
-    home: homedir(),
+    home: resolveHome(),
     stdout: (chunk) => {
       process.stdout.write(chunk);
     },

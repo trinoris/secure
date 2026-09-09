@@ -158,6 +158,14 @@ verified against a real Windows machine; this whole project's own development
 and testing has run under WSL2, which reports as `linux` and gets the full
 POSIX path above.
 
+A related but distinct gotcha: WSL2 and native Windows resolve `os.homedir()`
+to genuinely different directories (`/home/<user>` vs. `C:\Users\<user>`),
+so a session (and keyring, and identity) written by one is invisible to the
+other, even for the same repository and the same person — not a bug, just
+two different filesystems. `SECUREGIT_HOME` overrides `os.homedir()`
+explicitly for exactly this case; see [05-key-hierarchy.md](05-key-hierarchy.md)'s
+"Key material at rest" and [docs/securegit/02-faq.md](../../docs/securegit/02-faq.md).
+
 ### A known gap: interactive prompting isn't wired yet
 
 `src/bin/securegit.ts` reads real stdin to a `Buffer` for `init`/`unlock`'s

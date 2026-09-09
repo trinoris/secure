@@ -133,6 +133,11 @@ mechanism being unoriginal doesn't matter.
 | 15 | [Failure Modes](15-failure-modes.md) | F1–F20, what Git does, and what to tell the user |
 | 16 | [Adversarial Integrity](16-adversarial-integrity.md) | **Threat catalogue** — the configuration and workflow attacks |
 
+### Tooling integration (17)
+| # | Document | Description |
+|---|----------|-------------|
+| 17 | [Agent Integration](17-agent-integration.md) | `securegit agent install` — Claude/Cursor/Copilot/Kiro skill files, one shared instruction body |
+
 Fixtures, test layout and build order: [00-test-plan.md](00-test-plan.md).
 
 ## Current status

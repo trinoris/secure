@@ -18,7 +18,7 @@ beforeAll(async () => {
 
 async function run(
   args: string[],
-  opts: { cwd: string; home: string; input?: Buffer; passphrase?: string },
+  opts: { cwd: string; home: string; input?: Buffer; passphrase?: string; env?: Record<string, string> },
 ): Promise<{ code: number; stdout: Buffer; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn('node', [BIN, ...args], {
@@ -27,6 +27,7 @@ async function run(
         PATH: process.env.PATH,
         HOME: opts.home,
         ...(opts.passphrase !== undefined ? { SECUREGIT_PASSPHRASE: opts.passphrase } : {}),
+        ...opts.env,
       },
     });
     const outChunks: Buffer[] = [];
@@ -74,6 +75,44 @@ describe('the real securegit binary', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
       await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('SECUREGIT_HOME overrides os.homedir() for where the keyring is resolved', async () => {
+    // The cross-platform case this exists for: WSL's $HOME and native
+    // Windows' %USERPROFILE% are different filesystems for "the same" repo
+    // and "the same" person. HOME points at a real, empty decoy; the
+    // keyring must land under SECUREGIT_HOME instead, and be readable from
+    // there on a later call even though HOME never changes.
+    const d = await mkdtemp(join(tmpdir(), 'securegit-bin-home-repo-'));
+    const decoyHome = await mkdtemp(join(tmpdir(), 'securegit-bin-home-decoy-'));
+    const realHome = await mkdtemp(join(tmpdir(), 'securegit-bin-home-real-'));
+    try {
+      await mkdir(join(d, '.git'));
+      const init = await run(['init'], {
+        cwd: d,
+        home: decoyHome,
+        passphrase: 'correct horse battery staple',
+        env: { SECUREGIT_HOME: realHome },
+      });
+      expect(init.code).toBe(0);
+
+      // Nothing was written under the decoy HOME at all.
+      const listUnderDecoy = await run(['key', 'list'], { cwd: d, home: decoyHome });
+      expect(listUnderDecoy.code).toBe(2);
+      expect(listUnderDecoy.stderr).toContain('no keyring found');
+
+      // The same override reaches it again from a fresh process.
+      const listUnderOverride = await run(['key', 'list'], {
+        cwd: d,
+        home: decoyHome,
+        env: { SECUREGIT_HOME: realHome },
+      });
+      expect(listUnderOverride.code).toBe(0);
+    } finally {
+      await rm(d, { recursive: true, force: true });
+      await rm(decoyHome, { recursive: true, force: true });
+      await rm(realHome, { recursive: true, force: true });
     }
   });
 

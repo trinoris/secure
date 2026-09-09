@@ -166,6 +166,34 @@ own review habits make it.
 
 **Details:** [specs/securegit/16-adversarial-integrity.md](../../specs/securegit/16-adversarial-integrity.md)
 
+## I use both WSL and native Windows for the same repository — why does securegit say "no keyring found"?
+
+Because they genuinely are two different computers, as far as your key is
+concerned. Your repository itself — `.git`, the working tree,
+`.securegit/config.json` — lives on the Windows filesystem either way
+(`C:\...`, or the same thing mounted at `/mnt/c/...` from WSL), so both
+environments agree on *that*. But your actual key never lives inside the
+repository — deliberately, so it survives a `git clone` correctly landing
+nowhere it shouldn't. It lives under your home directory, and WSL
+(`/home/<you>`) and native Windows (`C:\Users\<you>`) have different homes,
+even for the same person on the same physical machine.
+
+So if you ran `securegit init` from a Windows PowerShell prompt, the key
+was written under Windows' home directory. Running `securegit key list` (or
+`unlock`, or anything else that needs the key) from a WSL terminal looks
+under WSL's home directory instead — finds nothing there, and says so.
+Nothing is lost; you're just looking in the other room.
+
+Two ways to fix it:
+
+- **Simplest: pick one environment for this repository and stay there.**
+  If you always work on it from WSL, always run `securegit` from WSL.
+- **Or bridge them explicitly**, if you genuinely need both: set
+  `SECUREGIT_HOME` to point at the other environment's home directory —
+  from WSL, that's usually `/mnt/c/Users/<you>`. `securegit` never tries to
+  guess or search across this split on its own; an explicit setting is the
+  only way it looks anywhere other than the current environment's own home.
+
 ## What happens if I lose my laptop, or forget my passphrase?
 
 If someone else on the team still has access, they can add a new key

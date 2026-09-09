@@ -22,7 +22,8 @@ import {
   setBindPath,
   type RepoConfig,
 } from '@trinoris/securelib/config';
-import { InstallError, install, protect, unprotect } from './install.js';
+import { InstallError, install, protect, unprotect, DEFAULT_PROTECT_PATTERNS } from './install.js';
+import { AgentInstallError, installAgentTargets, listAgentTargets, AGENT_TARGET_IDS } from './agent-install.js';
 import {
   KeyringError,
   addProvider,
@@ -143,7 +144,436 @@ export interface CliIO {
 }
 
 const USAGE =
-  'usage: securegit <init|install|protect|unprotect|unlock|lock|status|identity|key|verify|reencrypt|clean|smudge|textconv|merge|encrypt|decrypt|inspect|filter-process> ...';
+  'usage: securegit <init|install|protect|unprotect|unlock|lock|status|identity|key|agent|verify|reencrypt|clean|smudge|textconv|merge|encrypt|decrypt|inspect|filter-process> ...';
+
+// ---------------------------------------------------------------------------
+// `--help` / `-h` / `help`
+//
+// One data structure drives three outputs: the human-readable per-command
+// help (`securegit <command> --help`, `securegit help <command>`), the
+// top-level command list (`securegit --help`, `securegit help`), and the
+// machine-readable manifest (`securegit help --json`) — a coding agent or
+// script can introspect the entire CLI surface from this one call, without
+// reading source or docs. Keep this in sync with 10-cli-contract.md; that
+// spec remains the authority if the two ever disagree.
+// ---------------------------------------------------------------------------
+
+interface HelpEntry {
+  usage: string;
+  summary: string;
+  /** Additional paragraphs, rendered one per line after `summary`. */
+  details?: string[];
+  flags?: Array<{ flag: string; desc: string }>;
+  examples?: string[];
+  /** For a group command (`key`, `identity`): its subcommand names, in display order. */
+  subcommands?: string[];
+}
+
+const HELP_CATEGORIES: Array<{ title: string; commands: string[] }> = [
+  { title: 'Repository', commands: ['init', 'install', 'protect', 'unprotect', 'status', 'verify', 'reencrypt'] },
+  { title: 'Session', commands: ['unlock', 'lock'] },
+  { title: 'Identity and sharing', commands: ['identity', 'key'] },
+  { title: 'Ad hoc (no repository needed)', commands: ['encrypt', 'decrypt', 'inspect'] },
+  { title: 'AI coding agents', commands: ['agent'] },
+  { title: 'Invoked by Git, not by people', commands: ['clean', 'smudge', 'textconv', 'merge', 'filter-process'] },
+];
+
+export const HELP: Record<string, HelpEntry> = {
+  init: {
+    usage: 'securegit init [--bind-path] [--pad-to <n>]',
+    summary: 'Set up this repository: create .securegit/config.json and its first key (generation 1).',
+    details: [
+      'Prompts for a new passphrase on stdin to lock that key behind — at least 12 characters, no',
+      'other rule. Non-interactively, set SECUREGIT_PASSPHRASE instead of piping stdin. Refuses if you',
+      'are not inside a Git repository, or if this one is already set up. Neither flag can be changed',
+      'by re-running init — bindPath has its own update path (key rotate --bind-path); padTo does not',
+      'need one.',
+    ],
+    flags: [
+      { flag: '--bind-path', desc: 'fold the file path into encryption, so moving ciphertext between paths fails' },
+      { flag: '--pad-to <n>', desc: 'round encrypted file sizes up to the nearest multiple of n bytes (default: off)' },
+    ],
+    examples: ['securegit init', 'SECUREGIT_PASSPHRASE="correct horse battery staple" securegit init'],
+  },
+  install: {
+    usage: 'securegit install [--process] [--no-required] [--bin <cmd>] [--force]',
+    summary: 'Write the local .git/config entries that make Git actually call securegit on protected paths.',
+    details: [
+      'Required once per clone, and easy to forget — nothing visibly breaks if skipped, Git simply',
+      'never invokes the filter, and "protected" files check out as plaintext. Idempotent: safe to',
+      'run again if unsure whether it already happened.',
+    ],
+    flags: [
+      { flag: '--process', desc: 'use the long-running filter-process protocol instead of one clean/smudge call per file' },
+      { flag: '--no-required', desc: 'do not fail a checkout when the filter itself is unavailable' },
+      { flag: '--bin <cmd>', desc: 'the command Git should invoke instead of the resolved securegit on PATH' },
+      { flag: '--force', desc: 'overwrite filter configuration this tool did not originally write' },
+    ],
+    examples: ['securegit install'],
+  },
+  protect: {
+    usage: 'securegit protect [<pattern>...] [--no-residue]',
+    summary: 'Add path patterns to .gitattributes so Git routes them through the encryption filter.',
+    details: [
+      'Called with no pattern at all, protects a conservative default set of common secret-shaped',
+      'filenames instead — a fast-setup path for a first-time repository. The confirmation printed',
+      'afterward names exactly which patterns were applied; .gitattributes has the durable record.',
+    ],
+    flags: [{ flag: '--no-residue', desc: 'skip adding .gitignore entries for editor/merge residue files' }],
+    examples: ['securegit protect', "securegit protect '.env' 'config/production.*'"],
+  },
+  unprotect: {
+    usage: 'securegit unprotect <pattern>...',
+    summary: 'Remove path patterns from .gitattributes. Forward-only, like key rotation.',
+    details: [
+      'Already-committed blobs under a removed pattern stay encrypted until the file is next edited',
+      'and re-added (or `reencrypt` is run). A pattern that was never protected is a silent no-op.',
+    ],
+    examples: ["securegit unprotect '*.pem'"],
+  },
+  status: {
+    usage: 'securegit status [--json]',
+    summary: 'Show whether this repository is unlocked, its current generation, and any advisory warnings.',
+    flags: [{ flag: '--json', desc: 'machine-readable report to stdout instead of the human-readable form on stderr' }],
+    examples: ['securegit status', 'securegit status --json'],
+  },
+  verify: {
+    usage: 'securegit verify [--history | --access] [--json]',
+    summary: 'Audit this repository: config sanity, leaked plaintext, commit history, or who can read it.',
+    details: [
+      'No flags: fast enough for a pre-commit hook. --history walks every commit (CI/pre-push speed,',
+      'not pre-commit). --access reports every recipient and recovery export on file. Exits 5',
+      '(base form and --history only) if a protected path\'s committed content is not real ciphertext.',
+    ],
+    flags: [
+      { flag: '--history', desc: 'walk the full commit history, not just the current checkout' },
+      { flag: '--access', desc: 'report who can currently read this repository' },
+      { flag: '--json', desc: 'machine-readable report to stdout' },
+    ],
+    examples: ['securegit verify', 'securegit verify --history || exit 1', 'securegit verify --access --json'],
+  },
+  reencrypt: {
+    usage: 'securegit reencrypt [--paths <pathspec>] [--dry-run]',
+    summary: 'Move protected files onto the current key generation, without touching the worktree file.',
+    flags: [
+      { flag: '--paths <pathspec>', desc: 'a prefix match (not full git pathspec syntax) limiting which files move' },
+      { flag: '--dry-run', desc: 'report what would move, without staging anything' },
+    ],
+    examples: ['securegit reencrypt', 'securegit reencrypt --dry-run'],
+  },
+  unlock: {
+    usage: 'securegit unlock [--ttl <seconds>]',
+    summary: 'Unwrap this repository\'s key(s) once and cache the result for a bounded time (default 8 hours).',
+    details: [
+      'Tries the local keyring first, then — only if none exists — bootstraps from a recipient entry',
+      'plus this machine\'s own identity. Non-interactively: SECUREGIT_PASSPHRASE (or',
+      'SECUREGIT_SESSION_KEY, or SECUREGIT_PIV_PIN for a YubiKey-PIV provider) supplies the secret',
+      'instead of a prompt — see the CLI guide\'s "For scripts and agents" section. "no keyring found"',
+      'for a repository you know is set up usually means a different home directory than the one',
+      'that ran `init` (WSL vs. native Windows is the common case) — set SECUREGIT_HOME to point at it.',
+    ],
+    flags: [{ flag: '--ttl <seconds>', desc: 'cache lifetime; capped at 86400 (24 hours)' }],
+    examples: ['securegit unlock', 'securegit unlock --ttl 3600'],
+  },
+  lock: {
+    usage: 'securegit lock',
+    summary: 'Remove the session cache immediately. Nothing is lost — unlock again whenever needed.',
+    examples: ['securegit lock'],
+  },
+  identity: {
+    usage: 'securegit identity <init|show>',
+    summary: 'Manage this machine\'s personal identity keypair, used to receive shared access.',
+    subcommands: ['init', 'show'],
+  },
+  'identity init': {
+    usage: 'securegit identity init [--label <label>] [--generate-signing-key]',
+    summary: 'Generate this machine\'s X25519 identity keypair. Refuses if one already exists.',
+    details: [
+      'Prompts for a new passphrase on stdin to lock the private half behind — at least 12 characters,',
+      'no other rule (this passphrase protects your identity only; it is unrelated to any repository\'s',
+      'own passphrase). Non-interactively, set SECUREGIT_PASSPHRASE instead of piping stdin.',
+    ],
+    flags: [
+      { flag: '--label <label>', desc: 'a human-readable name for this identity' },
+      { flag: '--generate-signing-key', desc: 'generate a signing keypair too, only if none is already recorded' },
+    ],
+    examples: ['securegit identity init', 'SECUREGIT_PASSPHRASE="correct horse battery staple" securegit identity init'],
+  },
+  'identity show': {
+    usage: 'securegit identity show',
+    summary: 'Print this identity\'s public key and fingerprint — safe to paste anywhere, share with a teammate.',
+    examples: ['securegit identity show'],
+  },
+  key: {
+    usage: 'securegit key <subcommand> ...',
+    summary: 'Everything about keys: generations, hardware/passphrase providers, teammates, and recovery.',
+    subcommands: [
+      'list',
+      'rotate',
+      'add-recipient',
+      'remove-recipient',
+      'list-recipients',
+      'add-provider',
+      'remove-provider',
+      'export-recovery',
+      'import-recovery',
+    ],
+  },
+  'key list': {
+    usage: 'securegit key list [--json]',
+    summary: 'List every generation: fingerprint, creation date, current marker, and which providers unlock it.',
+    details: ['No key required — this is keyring metadata, not anything requiring decryption.'],
+    examples: ['securegit key list', 'securegit key list --json'],
+  },
+  'key rotate': {
+    usage: 'securegit key rotate [--bind-path] --confirm-recipients <n>',
+    summary: 'Create a new key generation and rewrap it for every current provider and recipient.',
+    details: [
+      'Prints the recipient list and refuses unless --confirm-recipients matches it exactly — a',
+      'deliberate speed bump against rotating without noticing who is actually still on the list.',
+      'Refuses a dirty working tree or a locked repository too (locked is checked first).',
+    ],
+    flags: [{ flag: '--bind-path', desc: 'also flip config.json\'s bindPath to true, once rotation succeeds' }],
+    examples: ['securegit key rotate --confirm-recipients 3'],
+  },
+  'key add-recipient': {
+    usage: 'securegit key add-recipient <pubkey> [--label <label>] [--signing-key <ssh-public-key>]',
+    summary: 'Share every generation you currently hold with a teammate\'s public key.',
+    details: ['Writes .securegit/recipients/<fingerprint>.json — commit and push it for them to use it.'],
+    examples: ['securegit key add-recipient SGPUB1... --label alice'],
+  },
+  'key remove-recipient': {
+    usage: 'securegit key remove-recipient <fingerprint>',
+    summary: 'Delete a recipient entry. Forward-only: does not revoke generations already shared.',
+    details: ['Pair with `key rotate` when you need the forward-only distinction to actually matter.'],
+    examples: ['securegit key remove-recipient a1b2c3d4e5f60718'],
+  },
+  'key list-recipients': {
+    usage: 'securegit key list-recipients [--json]',
+    summary: 'List every recipient: fingerprint, label, added-at, and which generations they cover.',
+    examples: ['securegit key list-recipients'],
+  },
+  'key add-provider': {
+    usage: 'securegit key add-provider <passphrase-file|yubikey-piv|yubikey-fido2> [options]',
+    summary: 'Add another way to unlock the same keys, without replacing what already works.',
+    details: [
+      'passphrase-file needs --label (a second, independent passphrase, at least 12 characters, read',
+      'from stdin — not SECUREGIT_PASSPHRASE, which already means the *current* unlock credential for',
+      'this call). yubikey-piv needs --slot <slot> (e.g. 9d) and SECUREGIT_PIV_PIN or a PIN prompt.',
+      'yubikey-fido2 takes an optional --device <path> and needs a physical touch. Needs the',
+      'repository already unlocked.',
+    ],
+    flags: [
+      { flag: '--label <label>', desc: 'passphrase-file only: names the new provider id' },
+      { flag: '--slot <slot>', desc: 'yubikey-piv only: the PIV slot to use, e.g. 9d' },
+      { flag: '--device <path>', desc: 'yubikey-fido2 only: a specific authenticator device path' },
+    ],
+    examples: ['securegit key add-provider yubikey-piv --slot 9d', 'securegit key add-provider yubikey-fido2'],
+  },
+  'key remove-provider': {
+    usage: 'securegit key remove-provider <id>',
+    summary: 'Delete a provider\'s wrapped slot. Refuses if it is the last one able to unlock any generation.',
+    examples: ['securegit key remove-provider yubikey-piv'],
+  },
+  'key export-recovery': {
+    usage: 'securegit key export-recovery --out <file>',
+    summary: 'Write a recovery file and print a one-time recovery code — your safety net if every key is lost.',
+    details: [
+      'Reads from the already-unlocked session; exits locked if there is none. The code is printed',
+      'once, to stderr, and never written anywhere by securegit itself — store it separately from',
+      'the file it decrypts.',
+    ],
+    examples: ['securegit key export-recovery --out recovery.enc'],
+  },
+  'key import-recovery': {
+    usage: 'securegit key import-recovery --in <file>',
+    summary: 'Rebuild a keyring from a recovery file and its code, wrapped under a freshly chosen passphrase.',
+    details: [
+      'Needs two secrets: SECUREGIT_RECOVERY_CODE and SECUREGIT_PASSPHRASE (or, with neither set,',
+      'two lines on stdin: the code, then the new passphrase) — the new passphrase must be at least',
+      '12 characters, the same rule `init` applies.',
+    ],
+    examples: ['securegit key import-recovery --in recovery.enc'],
+  },
+  agent: {
+    usage: 'securegit agent <install|list>',
+    summary: 'Write instruction files so a coding agent (Claude, Cursor, Copilot, Kiro) knows securegit\'s workflow.',
+    subcommands: ['install', 'list'],
+  },
+  'agent install': {
+    usage: `securegit agent install [${AGENT_TARGET_IDS.join('|')}]... [--force]`,
+    summary: 'Write the skill/rule/instructions file for the given targets, or all of them with none given.',
+    details: [
+      'Idempotent and safe to re-run. Refuses (exit 2) to overwrite a file at the same path this',
+      'command did not originally write; --force overwrites it anyway.',
+    ],
+    flags: [{ flag: '--force', desc: 'overwrite a file this command did not originally write' }],
+    examples: ['securegit agent install', 'securegit agent install claude cursor'],
+  },
+  'agent list': {
+    usage: 'securegit agent list [<target>...] [--json]',
+    summary: 'Print the targets and exact paths `agent install` would write, without writing anything.',
+    examples: ['securegit agent list'],
+  },
+  clean: {
+    usage: 'securegit clean -- <path>',
+    summary: 'Invoked by Git on checkin: plaintext on stdin, ciphertext on stdout. Not meant to be run by hand.',
+    examples: ['git config filter.securegit.clean "securegit clean -- %f"'],
+  },
+  smudge: {
+    usage: 'securegit smudge -- <path>',
+    summary: 'Invoked by Git on checkout: ciphertext on stdin, plaintext on stdout. Not meant to be run by hand.',
+    flags: [{ flag: '--strict', desc: 'fail rather than passing ciphertext through when locked' }],
+    examples: ['git config filter.securegit.smudge "securegit smudge -- %f"'],
+  },
+  textconv: {
+    usage: 'securegit textconv -- <file>',
+    summary: 'Invoked by Git for diff display: plaintext to stdout, never written to the object database.',
+    examples: ['git config diff.securegit.textconv "securegit textconv --"'],
+  },
+  merge: {
+    usage: 'securegit merge -- <base> <ours> <theirs> <markerSize> <path>',
+    summary: 'The three-way merge driver Git invokes on a protected path. Writes ciphertext to <ours> directly.',
+    examples: ['git config merge.securegit.driver "securegit merge -- %O %A %B %L %P"'],
+  },
+  'filter-process': {
+    usage: 'securegit filter-process',
+    summary: 'The long-running pkt-line filter server (git config filter.securegit.process). Not run by hand.',
+    examples: ['git config filter.securegit.process "securegit filter-process"'],
+  },
+  encrypt: {
+    usage: 'securegit encrypt <file> [--out <file>]',
+    summary: 'Envelope a file outside of any Git repository, using the same code path as the filter.',
+    details: ["'-' works as stdin/stdout for either argument."],
+    examples: ['securegit encrypt secret.txt --out secret.txt.enc', 'securegit encrypt - --out - < in > out'],
+  },
+  decrypt: {
+    usage: 'securegit decrypt <file> [--out <file>]',
+    summary: 'The inverse of encrypt.',
+    examples: ['securegit decrypt secret.txt.enc --out secret.txt'],
+  },
+  inspect: {
+    usage: 'securegit inspect <file> [--json]',
+    summary: 'Print an envelope\'s header fields (generation, algorithm, flags) without needing a key.',
+    flags: [{ flag: '--json', desc: 'machine-readable header fields to stdout' }],
+    examples: ['securegit inspect secret.txt.enc'],
+  },
+};
+
+const GLOBAL_FLAGS: Array<{ flag: string; desc: string }> = [
+  { flag: '--repo <path>', desc: 'operate on a repository other than the current directory' },
+  { flag: '--json', desc: 'machine-readable output, for the commands that support it' },
+  { flag: '--quiet', desc: 'suppress one-line success confirmations; never hides errors or a report' },
+  { flag: '-v, --verbose', desc: 'per-file tracing on clean/smudge/merge, to stderr; never plaintext or key material' },
+  { flag: '-h, --help', desc: 'show help — for a command, or, alone, this overview' },
+];
+
+const ENV_VARS: Array<{ name: string; desc: string }> = [
+  { name: 'SECUREGIT_PASSPHRASE', desc: 'unlocks the local keyring non-interactively, instead of a prompt' },
+  { name: 'SECUREGIT_SESSION_KEY', desc: 'a session file\'s own content, passed through instead of reading the file' },
+  { name: 'SECUREGIT_PIV_PIN', desc: 'a YubiKey PIV provider\'s PIN, non-interactively' },
+  { name: 'SECUREGIT_RECOVERY_CODE', desc: '`key import-recovery`\'s recovery code, non-interactively' },
+  { name: 'SECUREGIT_IDENTITY_FILE', desc: 'an identity file other than the default `~/.securegit/identity.json`' },
+  {
+    name: 'SECUREGIT_HOME',
+    desc: 'overrides where ~/.securegit/ is resolved from — set this if the same repository is also used from a different home directory (WSL vs. native Windows is the common case)',
+  },
+];
+
+const EXIT_CODE_HELP: Array<{ code: number; meaning: string }> = [
+  { code: EXIT_OK, meaning: 'success' },
+  { code: EXIT_LOCKED, meaning: 'locked — a key was needed and unavailable; run `securegit unlock`' },
+  { code: EXIT_MISCONFIGURED, meaning: 'misconfigured — repository, attributes, or git config wrong' },
+  { code: EXIT_CRYPTO, meaning: 'cryptographic failure — wrong key for this file, or corrupted ciphertext' },
+  { code: EXIT_USAGE, meaning: 'usage error — missing argument, unknown flag, or unknown command' },
+  { code: EXIT_LEAK, meaning: '`verify` found a leak — a protected path is not actually encrypted' },
+];
+
+function formatFlags(flags: Array<{ flag: string; desc: string }>): string {
+  const width = Math.max(...flags.map((f) => f.flag.length));
+  return flags.map((f) => `  ${f.flag.padEnd(width)}  ${f.desc}`).join('\n');
+}
+
+function renderCommandHelp(name: string, entry: HelpEntry): string {
+  const lines = [`usage: ${entry.usage}`, '', entry.summary];
+  if (entry.details && entry.details.length > 0) {
+    lines.push('', ...entry.details);
+  }
+  if (entry.subcommands && entry.subcommands.length > 0) {
+    lines.push(
+      '',
+      'Subcommands:',
+      ...entry.subcommands.map((s) => `  ${s}`),
+      '',
+      `Run \`securegit ${name} <subcommand> --help\` for details on one of these.`,
+    );
+  }
+  if (entry.flags && entry.flags.length > 0) {
+    lines.push('', 'Flags:', formatFlags(entry.flags));
+  }
+  if (entry.examples && entry.examples.length > 0) {
+    lines.push('', 'Examples:', ...entry.examples.map((e) => `  ${e}`));
+  }
+  lines.push('', 'See docs/securegit/05-cli-guide.md and specs/securegit/10-cli-contract.md for full details.');
+  return lines.join('\n');
+}
+
+function renderTopLevelHelp(): string {
+  const lines = [
+    'securegit — client-side Git encryption: a transparent clean/smudge filter',
+    'that encrypts selected files on your own workstation.',
+    '',
+    'usage: securegit <command> [args] [flags]',
+    '',
+  ];
+  for (const category of HELP_CATEGORIES) {
+    lines.push(`${category.title}:`);
+    const width = Math.max(...category.commands.map((c) => c.length));
+    for (const name of category.commands) {
+      const entry = HELP[name];
+      lines.push(`  ${name.padEnd(width)}  ${entry ? entry.summary : ''}`);
+    }
+    lines.push('');
+  }
+  lines.push('Global flags:', formatFlags(GLOBAL_FLAGS), '');
+  lines.push(
+    'Environment variables:',
+    formatFlags(ENV_VARS.map((v) => ({ flag: v.name, desc: v.desc }))),
+    '',
+  );
+  lines.push(
+    'Run `securegit <command> --help` or `securegit help <command>` for exact flags and examples',
+    '(e.g. `securegit key rotate --help`, for a subcommand). `securegit help --json` prints the',
+    'same information as a machine-readable manifest.',
+    '',
+    'Full reference: docs/securegit/05-cli-guide.md, specs/securegit/10-cli-contract.md',
+  );
+  return lines.join('\n');
+}
+
+function helpManifest(): unknown {
+  return {
+    commands: HELP,
+    categories: HELP_CATEGORIES,
+    globalFlags: GLOBAL_FLAGS,
+    envVars: ENV_VARS,
+    exitCodes: EXIT_CODE_HELP,
+  };
+}
+
+/** `--help`/`-h` before the `--` separator only — a path after it may legally begin with `-`. */
+function wantsHelp(args: string[]): boolean {
+  const sepIdx = args.indexOf('--');
+  const scanned = sepIdx === -1 ? args : args.slice(0, sepIdx);
+  return scanned.includes('--help') || scanned.includes('-h');
+}
+
+/** `key <subcommand> --help` / `identity <subcommand> --help` — looks up the combined help entry. */
+function groupHelp(name: string, args: string[]): string {
+  const sub = args.find((a) => !a.startsWith('-'));
+  const entry = sub !== undefined ? HELP[`${name} ${sub}`] : undefined;
+  return entry ? renderCommandHelp(`${name} ${sub}`, entry) : renderCommandHelp(name, HELP[name]!);
+}
 
 function resolvePassphrase(io: CliIO): string {
   const fromEnv = io.env.SECUREGIT_PASSPHRASE;
@@ -484,11 +914,9 @@ async function cmdInstall(args: string[], io: CliIO): Promise<number> {
 }
 
 async function cmdProtect(args: string[], io: CliIO): Promise<number> {
-  const patterns = args.filter((a) => !a.startsWith('--'));
-  if (patterns.length === 0) {
-    io.stderr('securegit: protect requires at least one pattern');
-    return EXIT_USAGE;
-  }
+  const given = args.filter((a) => !a.startsWith('--'));
+  const usingDefaults = given.length === 0;
+  const patterns = usingDefaults ? DEFAULT_PROTECT_PATTERNS : given;
   const residuePatterns = !args.includes('--no-residue');
   try {
     await protect(io.cwd, patterns, { residuePatterns });
@@ -496,7 +924,14 @@ async function cmdProtect(args: string[], io: CliIO): Promise<number> {
     io.stderr((e as Error).message);
     return EXIT_USAGE;
   }
-  io.info(`securegit: protecting ${patterns.join(', ')}`);
+  io.info(
+    usingDefaults
+      ? `securegit: no pattern given — protecting common secret-shaped defaults:\n` +
+          `  ${patterns.join(', ')}\n` +
+          `  action: \`securegit unprotect <pattern>\` removes one that doesn't fit;\n` +
+          `          \`securegit protect <pattern>\` adds more`
+      : `securegit: protecting ${patterns.join(', ')}`,
+  );
   return EXIT_OK;
 }
 
@@ -1493,6 +1928,59 @@ async function cmdKey(args: string[], io: CliIO): Promise<number> {
   }
 }
 
+function agentTargetsFrom(args: string[]): string[] {
+  return args.filter((a) => !a.startsWith('--'));
+}
+
+async function cmdAgentInstall(args: string[], io: CliIO): Promise<number> {
+  const force = args.includes('--force');
+  let results;
+  try {
+    results = await installAgentTargets(io.cwd, agentTargetsFrom(args), { force });
+  } catch (e) {
+    if (e instanceof AgentInstallError) {
+      io.stderr(e.message);
+      return e.kind === 'unknown-target' ? EXIT_USAGE : EXIT_MISCONFIGURED;
+    }
+    throw e;
+  }
+  const lines = results.map((r) => `  ${r.path} (${r.action})`);
+  io.info(`securegit: agent instructions installed\n${lines.join('\n')}`);
+  return EXIT_OK;
+}
+
+async function cmdAgentList(args: string[], io: CliIO): Promise<number> {
+  let entries;
+  try {
+    entries = listAgentTargets(agentTargetsFrom(args));
+  } catch (e) {
+    if (e instanceof AgentInstallError) {
+      io.stderr(e.message);
+      return EXIT_USAGE;
+    }
+    throw e;
+  }
+  if (args.includes('--json')) {
+    writeJson(io, entries);
+    return EXIT_OK;
+  }
+  io.stderr(entries.map((e) => `${e.target.padEnd(8)} ${e.path}`).join('\n'));
+  return EXIT_OK;
+}
+
+async function cmdAgent(args: string[], io: CliIO): Promise<number> {
+  const [sub, ...rest] = args;
+  switch (sub) {
+    case 'install':
+      return await cmdAgentInstall(rest, io);
+    case 'list':
+      return await cmdAgentList(rest, io);
+    default:
+      io.stderr(sub ? `securegit: unknown agent subcommand '${sub}'` : 'usage: securegit agent <install|list>');
+      return EXIT_USAGE;
+  }
+}
+
 /**
  * Re-runs `clean` over every protected tracked file's *working-tree*
  * plaintext and stages the result via `hash-object`/`update-index` plumbing
@@ -2182,48 +2670,89 @@ export async function runCli(io: CliIO): Promise<number> {
   }
 
   const [cmd, ...rest] = io.argv;
+  const showHelp = (text: string): number => {
+    io.stderr(text);
+    return EXIT_OK;
+  };
   try {
     switch (cmd) {
       case 'init':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('init', HELP.init!));
         return await cmdInit(rest, io);
       case 'install':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('install', HELP.install!));
         return await cmdInstall(rest, io);
       case 'protect':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('protect', HELP.protect!));
         return await cmdProtect(rest, io);
       case 'unprotect':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('unprotect', HELP.unprotect!));
         return await cmdUnprotect(rest, io);
       case 'unlock':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('unlock', HELP.unlock!));
         return await cmdUnlock(rest, io);
       case 'lock':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('lock', HELP.lock!));
         return await cmdLock(rest, io);
       case 'status':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('status', HELP.status!));
         return await cmdStatus(rest, io);
       case 'identity':
+        if (wantsHelp(rest)) return showHelp(groupHelp('identity', rest));
         return await cmdIdentity(rest, io);
       case 'key':
+        if (wantsHelp(rest)) return showHelp(groupHelp('key', rest));
         return await cmdKey(rest, io);
+      case 'agent':
+        if (wantsHelp(rest)) return showHelp(groupHelp('agent', rest));
+        return await cmdAgent(rest, io);
       case 'reencrypt':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('reencrypt', HELP.reencrypt!));
         return await cmdReencrypt(rest, io);
       case 'verify':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('verify', HELP.verify!));
         return await cmdVerify(rest, io);
       case 'clean':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('clean', HELP.clean!));
         return await cmdClean(rest, io);
       case 'smudge':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('smudge', HELP.smudge!));
         return await cmdSmudge(rest, io);
       case 'textconv':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('textconv', HELP.textconv!));
         return await cmdTextconv(rest, io);
       case 'merge':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('merge', HELP.merge!));
         return await cmdMerge(rest, io);
       case 'encrypt':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('encrypt', HELP.encrypt!));
         return await cmdEncrypt(rest, io);
       case 'decrypt':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('decrypt', HELP.decrypt!));
         return await cmdDecrypt(rest, io);
       case 'inspect':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('inspect', HELP.inspect!));
         return await cmdInspect(rest, io);
+      case 'help':
       case '--help':
-      case '-h':
-        io.stderr(USAGE);
-        return EXIT_OK;
+      case '-h': {
+        const topic = cmd === 'help' ? rest.find((a) => !a.startsWith('-')) : undefined;
+        if (io.argv.includes('--json')) {
+          io.stdout(Buffer.from(JSON.stringify(helpManifest())));
+          return EXIT_OK;
+        }
+        if (topic === undefined) {
+          return showHelp(renderTopLevelHelp());
+        }
+        if (!HELP[topic]) {
+          io.stderr(`securegit: unknown help topic '${topic}'\n${USAGE}`);
+          return EXIT_USAGE;
+        }
+        if (topic === 'key' || topic === 'identity' || topic === 'agent') {
+          return showHelp(groupHelp(topic, rest.slice(rest.indexOf(topic) + 1)));
+        }
+        return showHelp(renderCommandHelp(topic, HELP[topic]!));
+      }
       default:
         io.stderr(cmd ? `securegit: unknown command '${cmd}'\n${USAGE}` : USAGE);
         return EXIT_USAGE;

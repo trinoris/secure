@@ -414,6 +414,24 @@ export async function writeKeyringFile(path: string, file: KeyringFile): Promise
 }
 
 export async function readKeyringFile(path: string): Promise<KeyringFile> {
-  const raw = await readFile(path, 'utf8');
-  return JSON.parse(raw) as KeyringFile;
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new KeyringError(
+        `securegit: no keyring found at ${path}\n` +
+          `  action: run \`securegit init\` first, or \`securegit key import-recovery\` to restore one\n` +
+          `  note:   if this repository is already set up elsewhere, you may be looking in the wrong\n` +
+          `          home directory (WSL and native Windows have separate ones, for example) —\n` +
+          `          set SECUREGIT_HOME to override where this path is resolved from`,
+      );
+    }
+    throw e;
+  }
+  try {
+    return JSON.parse(raw) as KeyringFile;
+  } catch {
+    throw new KeyringError(`securegit: keyring at ${path} is not valid JSON — it may be corrupted`);
+  }
 }

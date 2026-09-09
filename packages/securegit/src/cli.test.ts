@@ -223,16 +223,21 @@ describe('install', () => {
 });
 
 describe('protect', () => {
-  it('exits 4 with no patterns', async () => {
-    const h = harness();
-    expect(await h.run(['protect'])).toBe(4);
-  });
-
   it('writes .gitattributes', async () => {
     const h = harness();
     expect(await h.run(['protect', '.env'])).toBe(0);
     const content = await readFile(join(dir, '.gitattributes'), 'utf8');
     expect(content).toContain('.env filter=securegit diff=securegit merge=securegit -text');
+  });
+
+  it('with no pattern given, protects the default secret-shaped patterns instead', async () => {
+    const h = harness();
+    expect(await h.run(['protect'])).toBe(0);
+    const content = await readFile(join(dir, '.gitattributes'), 'utf8');
+    expect(content).toContain('.env filter=securegit');
+    expect(content).toContain('*.pem filter=securegit');
+    expect(content).toContain('secrets/** filter=securegit');
+    expect(h.infoText()).toContain('no pattern given');
   });
 });
 
@@ -1342,6 +1347,30 @@ describe('key add-provider / key remove-provider / key list / key list-recipient
     expect(parsed.current).toBe(1);
     expect(parsed.generations).toHaveLength(1);
     expect(parsed.generations[0].providers).toEqual(['passphrase-file']);
+  });
+
+  it('list exits misconfigured before init, with a friendly message rather than a raw ENOENT', async () => {
+    const h = harness();
+    expect(await h.run(['key', 'list'])).toBe(2);
+    expect(h.stderrText()).toContain('run `securegit init` first');
+    expect(h.stderrText()).not.toContain('ENOENT');
+  });
+
+  it('list exits misconfigured with a friendly message when the repo is initialised but this machine has no local keyring', async () => {
+    // The repo's config is real (e.g. cloned from a teammate) but this
+    // `home` never ran `init` or `key import-recovery` — a real, common
+    // shape distinct from "never initialised at all" above.
+    const h = harness();
+    await h.run(['init']);
+    const otherHome = await mkdtemp(join(tmpdir(), 'securegit-cli-keyless-home-'));
+    try {
+      const result = await h.run(['key', 'list'], { home: otherHome });
+      expect(result).toBe(2);
+      expect(h.stderrText()).toContain('run `securegit init` first');
+      expect(h.stderrText()).not.toContain('ENOENT');
+    } finally {
+      await rm(otherHome, { recursive: true, force: true });
+    }
   });
 
   it('list-recipients exits misconfigured before init', async () => {
@@ -2644,5 +2673,150 @@ describe('--quiet', () => {
     await h.run(['identity', 'init']);
     await h.run(['identity', 'show', '--quiet']);
     expect(h.stderrText()).toContain('SGPUB1');
+  });
+});
+
+describe('help', () => {
+  it('`--help` / `-h` / bare `help` all print the full command list', async () => {
+    const h = harness();
+    for (const argv of [['--help'], ['-h'], ['help']]) {
+      expect(await h.run(argv)).toBe(0);
+      expect(h.stderrText()).toContain('usage: securegit <command>');
+      expect(h.stderrText()).toContain('protect');
+      expect(h.stderrText()).toContain('Global flags:');
+      expect(h.stderrText()).toContain('Environment variables:');
+      expect(h.stderrText()).toContain('SECUREGIT_HOME');
+    }
+  });
+
+  it('`securegit <command> --help` prints that command\'s usage, flags and an example', async () => {
+    const h = harness();
+    expect(await h.run(['protect', '--help'])).toBe(0);
+    expect(h.stderrText()).toContain('usage: securegit protect');
+    expect(h.stderrText()).toContain('Examples:');
+    expect(h.stderrText()).toContain('securegit protect');
+  });
+
+  it('does not run the command when --help is present', async () => {
+    const h = harness();
+    await h.run(['protect', '--help']);
+    await expect(readFile(join(dir, '.gitattributes'), 'utf8')).rejects.toThrow();
+  });
+
+  it('`securegit key rotate --help` and `securegit help key rotate` print identical subcommand help', async () => {
+    const h = harness();
+    await h.run(['key', 'rotate', '--help']);
+    const fromFlag = h.stderrText();
+    await h.run(['help', 'key', 'rotate']);
+    const fromHelpWord = h.stderrText();
+    expect(fromFlag).toContain('usage: securegit key rotate');
+    expect(fromFlag).toBe(fromHelpWord);
+  });
+
+  it('`securegit key --help` and `securegit identity --help` print a subcommand overview', async () => {
+    const h = harness();
+    await h.run(['key', '--help']);
+    expect(h.stderrText()).toContain('Subcommands:');
+    await h.run(['identity', '--help']);
+    expect(h.stderrText()).toContain('Subcommands:');
+  });
+
+  it('`securegit agent --help` prints an overview; `agent install --help` and `agent list --help` print their own usage', async () => {
+    const h = harness();
+    await h.run(['agent', '--help']);
+    expect(h.stderrText()).toContain('Subcommands:');
+    await h.run(['agent', 'install', '--help']);
+    expect(h.stderrText()).toContain('usage: securegit agent install');
+    await h.run(['agent', 'list', '--help']);
+    expect(h.stderrText()).toContain('usage: securegit agent list');
+  });
+
+  it('a literal "--help" path after `--` reaches the command, not the help renderer', async () => {
+    const h = harness();
+    // No init yet — if this were mistaken for a help request it would exit 0
+    // with usage text; instead it should hit clean's real "not configured" path.
+    expect(await h.run(['clean', '--', '--help'])).toBe(2);
+    expect(h.stderrText()).not.toContain('usage: securegit clean');
+  });
+
+  it('`securegit help bogus` exits usage (4)', async () => {
+    const h = harness();
+    expect(await h.run(['help', 'bogus'])).toBe(4);
+  });
+
+  it('`securegit help --json` prints a manifest covering every command', async () => {
+    const h = harness();
+    expect(await h.run(['help', '--json'])).toBe(0);
+    const manifest = JSON.parse(h.stdoutText()) as {
+      commands: Record<string, unknown>;
+      globalFlags: unknown[];
+      envVars: Array<{ name: string; desc: string }>;
+    };
+    expect(manifest.commands.protect).toBeDefined();
+    expect(manifest.commands['key rotate']).toBeDefined();
+    expect(Array.isArray(manifest.globalFlags)).toBe(true);
+    expect(manifest.envVars.map((v) => v.name)).toContain('SECUREGIT_HOME');
+  });
+});
+
+describe('agent install / agent list', () => {
+  it('with no target, writes all four files', async () => {
+    const h = harness();
+    expect(await h.run(['agent', 'install'])).toBe(0);
+    expect(h.infoText()).toContain('.claude/skills/securegit/SKILL.md');
+    await expect(readFile(join(dir, '.cursor', 'rules', 'securegit.mdc'), 'utf8')).resolves.toContain('securegit');
+  });
+
+  it('with a specific target, writes only that file', async () => {
+    const h = harness();
+    expect(await h.run(['agent', 'install', 'claude'])).toBe(0);
+    await expect(readFile(join(dir, '.cursor', 'rules', 'securegit.mdc'), 'utf8')).rejects.toThrow();
+  });
+
+  it('is idempotent on a second run', async () => {
+    const h = harness();
+    await h.run(['agent', 'install']);
+    expect(await h.run(['agent', 'install'])).toBe(0);
+    expect(h.infoText()).toContain('unchanged');
+  });
+
+  it('refuses (exit 2) to overwrite a hand-edited file without --force', async () => {
+    const h = harness();
+    await mkdir(join(dir, '.cursor', 'rules'), { recursive: true });
+    await writeFile(join(dir, '.cursor', 'rules', 'securegit.mdc'), 'hand-written\n');
+    expect(await h.run(['agent', 'install', 'cursor'])).toBe(2);
+  });
+
+  it('--force overwrites a hand-edited file', async () => {
+    const h = harness();
+    await mkdir(join(dir, '.cursor', 'rules'), { recursive: true });
+    await writeFile(join(dir, '.cursor', 'rules', 'securegit.mdc'), 'hand-written\n');
+    expect(await h.run(['agent', 'install', 'cursor', '--force'])).toBe(0);
+  });
+
+  it('an unknown target exits usage (4)', async () => {
+    const h = harness();
+    expect(await h.run(['agent', 'install', 'bogus'])).toBe(4);
+  });
+
+  it('an unknown agent subcommand exits usage (4)', async () => {
+    const h = harness();
+    expect(await h.run(['agent', 'bogus'])).toBe(4);
+  });
+
+  it('`agent list` prints paths and writes nothing', async () => {
+    const h = harness();
+    expect(await h.run(['agent', 'list'])).toBe(0);
+    expect(h.stderrText()).toContain('.claude/skills/securegit/SKILL.md');
+    await expect(readFile(join(dir, '.claude', 'skills', 'securegit', 'SKILL.md'), 'utf8')).rejects.toThrow();
+  });
+
+  it('`agent list --json` prints a machine-readable array to stdout', async () => {
+    const h = harness();
+    expect(await h.run(['agent', 'list', '--json'])).toBe(0);
+    const entries = JSON.parse(h.stdoutText()) as Array<{ target: string; path: string }>;
+    expect(entries.map((e) => e.target).sort()).toEqual(
+      ['antigravity', 'claude', 'codex', 'copilot', 'cursor', 'gemini', 'kiro'].sort(),
+    );
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtemp, mkdir, rm, chmod, readdir, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, chmod, readdir, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isSecret, keyFingerprint } from './crypto.js';
@@ -613,9 +613,19 @@ describe('writeKeyringFile() / readKeyringFile()', () => {
     expect(entries).toEqual(['keyring.json']);
   });
 
-  it('reading a missing file throws rather than returning an empty keyring', async () => {
+  it('reading a missing file throws a friendly, actionable KeyringError, not a raw ENOENT', async () => {
     dir = await mkdtemp(join(tmpdir(), 'securegit-keyring-'));
-    await expect(readKeyringFile(join(dir, 'nope.json'))).rejects.toThrow();
+    const path = join(dir, 'nope.json');
+    await expect(readKeyringFile(path)).rejects.toThrow(KeyringError);
+    await expect(readKeyringFile(path)).rejects.toThrow(/no keyring found.*securegit init/s);
+  });
+
+  it('reading a corrupted (non-JSON) file throws a friendly KeyringError', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'securegit-keyring-'));
+    const path = join(dir, 'keyring.json');
+    await writeFile(path, 'not valid json at all');
+    await expect(readKeyringFile(path)).rejects.toThrow(KeyringError);
+    await expect(readKeyringFile(path)).rejects.toThrow(/not valid JSON/);
   });
 
   it('a write failure leaves the previously written file untouched (F11)', async () => {
