@@ -112,6 +112,18 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run build:securelib
+      # securegit's own cli.test.ts genuinely dynamic-imports the real,
+      # installed @trinoris/securelib-piv/-fido2 packages too (the
+      # "add-provider yubikey-piv/yubikey-fido2 loads the real companion
+      # package..." tests) — same real, inverted test-time dependency as
+      # securelib's own registry.test.ts (see build-securelib's comment).
+      # Without these built, loadProvider() fails at the dynamic import
+      # itself ("which is not installed", exit 2) instead of the intended
+      # "loads fine, fails past that with no hardware attached" (exit 4) —
+      # confirmed by a real CI run (34351334932) that failed exactly this
+      # way before this fix.
+      - run: npm run build:securelib-piv
+      - run: npm run build:securelib-fido2
       - run: npm run build --workspace=packages/securegit
       - run: npm run typecheck --workspace=packages/securegit
       - run: npm run test:coverage --workspace=packages/securegit
