@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm, readFile, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, rm, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { keyFingerprint } from './crypto.js';
@@ -44,6 +44,52 @@ describe('wrapForRecipient() / unwrapForRecipient()', () => {
       fingerprint: RMK_FINGERPRINT,
     });
     expect(recovered.equals(RMK)).toBe(true);
+  });
+
+  it('rejects non-hex ephemeral/payload data as a malformed wrapped generation', () => {
+    const recipient = generateX25519KeyPair();
+    expect(() =>
+      unwrapForRecipient({
+        identityKeyPair: recipient,
+        wrapped: { fingerprint: RMK_FINGERPRINT, ephemeral: 'not hex at all!!', payload: 'also not hex!!' },
+        repoId: REPO_ID,
+        generation: 1,
+        fingerprint: RMK_FINGERPRINT,
+      }),
+    ).toThrow(RecipientError);
+  });
+
+  it('rejects a genuinely non-string ephemeral field (e.g. a hand-edited or corrupted recipient file) — Buffer.from throws, not just decodes short', () => {
+    const recipient = generateX25519KeyPair();
+    expect(() =>
+      unwrapForRecipient({
+        identityKeyPair: recipient,
+        // Buffer.from(string, 'hex') is lenient (stops at the first bad
+        // pair rather than throwing) — only a non-string value actually
+        // reaches the catch block below.
+        wrapped: { fingerprint: RMK_FINGERPRINT, ephemeral: null as unknown as string, payload: 'aa' },
+        repoId: REPO_ID,
+        generation: 1,
+        fingerprint: RMK_FINGERPRINT,
+      }),
+    ).toThrow(RecipientError);
+  });
+
+  it('rejects a wrapped generation with the wrong ephemeral key length', () => {
+    const recipient = generateX25519KeyPair();
+    expect(() =>
+      unwrapForRecipient({
+        identityKeyPair: recipient,
+        wrapped: {
+          fingerprint: RMK_FINGERPRINT,
+          ephemeral: Buffer.alloc(31).toString('hex'),
+          payload: Buffer.alloc(32).toString('hex'),
+        },
+        repoId: REPO_ID,
+        generation: 1,
+        fingerprint: RMK_FINGERPRINT,
+      }),
+    ).toThrow(RecipientError);
   });
 
   it('a different identity cannot unwrap', () => {
@@ -288,6 +334,17 @@ describe('unlockFromRecipientFile()', () => {
     const keys = unlockFromRecipientFile(file, recipient, 'a-different-repo');
     expect(keys.available()).toEqual([]);
   });
+
+  it('silently skips a non-integer generation key rather than throwing (defensive, against a hand-edited file)', () => {
+    const recipient = generateX25519KeyPair();
+    const rmk1 = Buffer.alloc(32, 0x11);
+    const file = fileFor(recipient, { '1': rmk1 });
+    const corrupted: RecipientFile = { ...file, keys: { ...file.keys, abc: file.keys['1']! } };
+
+    const keys = unlockFromRecipientFile(corrupted, recipient, REPO_ID);
+    expect(keys.available()).toHaveLength(1);
+    expect(keys.current()?.rmk.equals(rmk1)).toBe(true);
+  });
 });
 
 describe('recipientsDir() / recipientPath() / writeRecipientFile() / readRecipientFile()', () => {
@@ -326,6 +383,28 @@ describe('recipientsDir() / recipientPath() / writeRecipientFile() / readRecipie
 
       const mode = (await stat(path)).mode & 0o777;
       expect(mode).not.toBe(0o600); // not secret — ordinary umask-governed permissions
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('cleans up its temp file when the final rename fails', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'securegit-recipients-'));
+    try {
+      const file: RecipientFile = {
+        version: 1,
+        fingerprint: 'abc',
+        publicKey: 'SGPUB1x',
+        label: 'laptop',
+        addedAt: new Date().toISOString(),
+        addedBy: 'def',
+        keys: {},
+      };
+      const path = recipientPath(dir, 'abc');
+      await mkdir(path, { recursive: true }); // occupies the target path itself, so rename onto it fails
+      await expect(writeRecipientFile(path, file)).rejects.toThrow();
+      const entries = await readdir(recipientsDir(dir));
+      expect(entries).toEqual(['abc.json']); // only the directory — no leftover tmp-*
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, rm, stat, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassphraseFileProvider } from './provider.js';
@@ -87,6 +87,10 @@ describe('encodePublicKey() / decodePublicKey()', () => {
     const { publicKey } = generateX25519KeyPair();
     const encoded = encodePublicKey(publicKey);
     expect(encoded.slice('SGPUB1'.length)).toMatch(/^[0-9A-HJKMNP-TV-Z]+$/);
+  });
+
+  it('rejects a public key of the wrong length', () => {
+    expect(() => encodePublicKey(Buffer.alloc(31))).toThrow(/must be 32 bytes, got 31/);
   });
 
   it('rejects a one-character corruption via the checksum', () => {
@@ -224,6 +228,15 @@ describe('identityPath() / writeIdentityFile() / readIdentityFile()', () => {
   it('reading a missing file throws', async () => {
     await expect(readIdentityFile(identityPath(dir))).rejects.toThrow();
   });
+
+  it('cleans up its temp file when the final rename fails', async () => {
+    const { file } = await createIdentity('laptop', passphraseProvider());
+    const path = join(dir, 'identity.json');
+    await mkdir(path); // occupies the target path itself, so rename onto it fails
+    await expect(writeIdentityFile(path, file)).rejects.toThrow();
+    const entries = await readdir(dir);
+    expect(entries).toEqual(['identity.json']); // only the directory — no leftover tmp-*
+  });
 });
 
 describe('resolveSigningKeyRef()', () => {
@@ -315,6 +328,22 @@ describe('detectLocalSigningKey()', () => {
   it('reads the inline key:: form too', async () => {
     await execFile('git', ['config', 'user.signingkey', 'key::ssh-ed25519 AAAAinline'], { cwd: repoDir });
     await expect(detectLocalSigningKey(repoDir, home)).resolves.toBe('ssh-ed25519 AAAAinline');
+  });
+
+  it('wraps a real subprocess failure (git not on PATH) as an IdentityError, distinctly from "unset" (exit 1)', async () => {
+    // `git config --get` on a genuinely unset key also exits 1 (confirmed
+    // empirically — malformed keys do too), so the only realistic way to
+    // reach the "some other failure" branch is a failure below git itself:
+    // here, the subprocess spawn failing outright (ENOENT, not git's own
+    // exit code at all).
+    const originalPath = process.env.PATH;
+    process.env.PATH = '';
+    try {
+      await expect(detectLocalSigningKey(repoDir, home)).rejects.toThrow(IdentityError);
+      await expect(detectLocalSigningKey(repoDir, home)).rejects.toThrow(/could not read git config/);
+    } finally {
+      process.env.PATH = originalPath;
+    }
   });
 });
 

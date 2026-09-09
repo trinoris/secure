@@ -52,7 +52,7 @@ describe('package.json (T11: supply chain)', () => {
   it('development dependencies are exactly the expected build/test tooling plus the peer it tests against', async () => {
     const pkg = await readPackageJson();
     expect(Object.keys(pkg.devDependencies ?? {}).sort()).toEqual(
-      ['@trinoris/securelib', '@types/node', 'typescript', 'vitest'].sort(),
+      ['@trinoris/securelib', '@types/node', '@vitest/coverage-v8', 'typescript', 'vitest'].sort(),
     );
   });
 });

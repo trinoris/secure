@@ -90,6 +90,21 @@ describe('YubikeyPivProvider', () => {
     await expect(provider.unwrap(wrapped, ctx(state))).rejects.toBeInstanceOf(ProviderError);
   });
 
+  it('unwrap() throws ProviderError when the wrapped payload is missing a required field', async () => {
+    const provider = new YubikeyPivProvider(new FakePivCard(), '9d', () => '123456');
+    const state = await provider.init({ repoId: 'repo-a', generation: 1 });
+    const wrapped = await provider.wrap(randomBytes(32), ctx(state));
+    const { ciphertext: _ciphertext, ...withoutCiphertext } = wrapped.payload;
+    await expect(
+      provider.unwrap({ provider: wrapped.provider, payload: withoutCiphertext }, ctx(state)),
+    ).rejects.toThrow(/missing a required field/);
+  });
+
+  it('wrap() throws ProviderError when ctx.state is missing slot (requireState)', async () => {
+    const provider = new YubikeyPivProvider(new FakePivCard(), '9d', () => '123456');
+    await expect(provider.wrap(randomBytes(32), ctx({}))).rejects.toThrow(/missing slot/);
+  });
+
   it('available() reflects whether the card is present, without prompting', async () => {
     const card = new FakePivCard();
     const provider = new YubikeyPivProvider(card, '9d', () => '123456');

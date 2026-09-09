@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { RealFido2Authenticator, type Runner } from './index.js';
+import { RealFido2Authenticator, createProvider, type Runner } from './index.js';
 
 /**
  * Covers RealFido2Authenticator's own logic (device discovery, argv
@@ -127,5 +127,29 @@ describe('RealFido2Authenticator.getAssertion()', () => {
     const failure = authenticator.getAssertion(randomBytes(16), randomBytes(32));
     await expect(failure).rejects.toThrow('securelib-fido2: FIDO2 GetAssertion failed');
     await expect(failure).rejects.toMatchObject({ cause: expect.objectContaining({ message: expect.stringContaining('NO_CREDENTIALS') }) });
+  });
+});
+
+describe('createProvider()', () => {
+  // registry.ts's loadProvider() entry point (06-key-provider-port.md,
+  // "Loading a provider package without paying for it") — needs no I/O
+  // and no real authenticator to verify it constructs correctly.
+
+  it('builds a KeyProvider with the default id "yubikey-fido2"', () => {
+    const provider = createProvider({});
+    expect(provider.id).toBe('yubikey-fido2');
+    expect(provider.describe().id).toBe('yubikey-fido2');
+  });
+
+  it('accepts undefined config (config ?? {} branch)', () => {
+    expect(() => createProvider(undefined)).not.toThrow();
+  });
+
+  it('accepts a config with no device', () => {
+    expect(() => createProvider({})).not.toThrow();
+  });
+
+  it('accepts a config with an explicit device', () => {
+    expect(() => createProvider({ device: '/dev/hidraw1' })).not.toThrow();
   });
 });

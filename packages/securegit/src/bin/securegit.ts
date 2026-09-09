@@ -35,46 +35,94 @@ async function readStdin(): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+const CTRL_C = String.fromCharCode(3);
+const BACKSPACE = String.fromCharCode(127);
+const CTRL_H = String.fromCharCode(8);
+
 /**
- * Reads one line of input from the real terminal without echoing it —
- * not even asterisks, so the terminal reveals nothing at all about the
- * secret, not even its length (the same choice `ssh`'s and `sudo`'s own
- * prompts make). Only ever called when `process.stdin.isTTY` is already
- * true, so raw mode is always available.
+ * The raw-mode terminal operations `promptSecret()` needs — abstracted for
+ * the same reason `FilterProcessIO`/`CliIO` abstract `process.*` elsewhere
+ * in this codebase: a fake implementation lets a test drive synthetic
+ * keystrokes and inspect what got written, without a real TTY (there isn't
+ * one inside a test runner). `realPromptIO()` (below) is the only
+ * implementation `main()` ever actually uses.
  */
-async function promptSecret(label: string): Promise<string> {
-  const stdin = process.stdin;
-  process.stdout.write(label);
+export interface PromptIO {
+  write: (text: string) => void;
+  onData: (handler: (chunk: string) => void) => void;
+  offData: (handler: (chunk: string) => void) => void;
+  setRawMode: (enabled: boolean) => void;
+  resume: () => void;
+  pause: () => void;
+  exit: (code: number) => void;
+}
+
+function realPromptIO(): PromptIO {
+  process.stdin.setEncoding('utf8');
+  return {
+    write: (text) => {
+      process.stdout.write(text);
+    },
+    onData: (handler) => {
+      process.stdin.on('data', handler);
+    },
+    offData: (handler) => {
+      process.stdin.removeListener('data', handler);
+    },
+    setRawMode: (enabled) => {
+      process.stdin.setRawMode?.(enabled);
+    },
+    resume: () => {
+      process.stdin.resume();
+    },
+    pause: () => {
+      process.stdin.pause();
+    },
+    exit: (code) => {
+      process.exit(code);
+    },
+  };
+}
+
+/**
+ * Reads one line of input without echoing it — not even asterisks, so the
+ * terminal reveals nothing at all about the secret, not even its length
+ * (the same choice `ssh`'s and `sudo`'s own prompts make). Only ever called
+ * from a real TTY, so raw mode is always meaningful there; a fake `io` in a
+ * test never actually needs one.
+ */
+export async function promptSecret(label: string, io: PromptIO = realPromptIO()): Promise<string> {
+  io.write(label);
   return new Promise((resolve) => {
     let input = '';
     const onData = (chunk: string): void => {
       for (const char of chunk) {
         if (char === '\n' || char === '\r') {
-          stdin.setRawMode?.(false);
-          stdin.pause();
-          stdin.removeListener('data', onData);
-          process.stdout.write('\n');
+          io.setRawMode(false);
+          io.pause();
+          io.offData(onData);
+          io.write('\n');
           resolve(input);
           return;
         }
-        if (char === '') {
-          // Ctrl-C: restore the terminal before exiting, the same courtesy
-          // it gets back after any other interactive command.
-          stdin.setRawMode?.(false);
-          process.stdout.write('\n');
-          process.exit(130);
+        if (char === CTRL_C) {
+          // Restore the terminal before exiting — the same courtesy it
+          // gets back after any other interactive command.
+          io.setRawMode(false);
+          io.write('\n');
+          io.exit(130);
+          return; // a fake `io.exit` in a test doesn't actually stop this
         }
-        if (char === '' || char === '\b') {
+        if (char === BACKSPACE || char === CTRL_H) {
           input = input.slice(0, -1);
           continue;
         }
         input += char;
       }
     };
-    stdin.setRawMode?.(true);
-    stdin.resume();
-    stdin.setEncoding('utf8');
-    stdin.on('data', onData);
+    io.setRawMode(true);
+    io.resume();
+    io.onData(onData);
   });
 }
 
@@ -137,23 +185,46 @@ export function interactiveSecretLabels(argv: string[], env: NodeJS.ProcessEnv):
 }
 
 /** Prompts once, or (`confirm: true`) until two consecutive entries match. */
-async function promptWithConfirm(prompt: SecretPrompt): Promise<string> {
-  if (!prompt.confirm) return promptSecret(prompt.label);
+export async function promptWithConfirm(prompt: SecretPrompt, io: PromptIO = realPromptIO()): Promise<string> {
+  if (!prompt.confirm) return promptSecret(prompt.label, io);
   for (;;) {
-    const first = await promptSecret(prompt.label);
-    const second = await promptSecret('Confirm passphrase: ');
+    const first = await promptSecret(prompt.label, io);
+    const second = await promptSecret('Confirm passphrase: ', io);
     if (first === second) return first;
-    process.stdout.write("securegit: those didn't match — try again\n");
+    io.write("securegit: those didn't match — try again\n");
   }
 }
 
-async function resolveStdin(argv: string[]): Promise<Buffer> {
-  if (!process.stdin.isTTY) return readStdin();
-  const prompts = interactiveSecretLabels(argv, process.env);
-  if (prompts.length === 0) return readStdin();
+export interface ResolveStdinOptions {
+  isTTY: boolean;
+  env: NodeJS.ProcessEnv;
+  io: PromptIO;
+  readStdin: () => Promise<Buffer>;
+}
+
+const REAL_RESOLVE_STDIN_OPTIONS: ResolveStdinOptions = {
+  get isTTY() {
+    return process.stdin.isTTY ?? false;
+  },
+  get env() {
+    return process.env;
+  },
+  get io() {
+    return realPromptIO();
+  },
+  readStdin,
+};
+
+export async function resolveStdin(
+  argv: string[],
+  opts: ResolveStdinOptions = REAL_RESOLVE_STDIN_OPTIONS,
+): Promise<Buffer> {
+  if (!opts.isTTY) return opts.readStdin();
+  const prompts = interactiveSecretLabels(argv, opts.env);
+  if (prompts.length === 0) return opts.readStdin();
   const values: string[] = [];
   for (const prompt of prompts) {
-    values.push(await promptWithConfirm(prompt));
+    values.push(await promptWithConfirm(prompt, opts.io));
   }
   return Buffer.from(`${values.join('\n')}\n`, 'utf8');
 }

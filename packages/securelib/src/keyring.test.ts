@@ -621,6 +621,18 @@ describe('writeKeyringFile() / readKeyringFile()', () => {
     await expect(readKeyringFile(path)).rejects.toThrow(/no keyring found.*SECUREGIT_HOME/s);
   });
 
+  it('a non-ENOENT read failure (e.g. permission denied) propagates as-is, not wrapped as "no keyring found"', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'securegit-keyring-'));
+    const path = join(dir, 'keyring.json');
+    await writeFile(path, '{}');
+    await chmod(path, 0o000);
+    try {
+      await expect(readKeyringFile(path)).rejects.not.toBeInstanceOf(KeyringError);
+    } finally {
+      await chmod(path, 0o600); // restore so afterEach can remove it
+    }
+  });
+
   it('does not suggest "run init first" — reaching this error already implies config.json exists', async () => {
     // Every real cli.ts caller only reaches readKeyringFile() after
     // readConfig()/loadKeys() already succeeded, so that advice is always
@@ -636,6 +648,27 @@ describe('writeKeyringFile() / readKeyringFile()', () => {
     expect(message).not.toContain('run `securegit init` first');
     expect(message).toContain('import-recovery');
     expect(message).toContain('add-recipient');
+  });
+
+  it('names a found candidate home when findLikelyWindowsHome locates exactly one match', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'securegit-keyring-'));
+    const repoId = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4';
+    const path = join(dir, 'repos', repoId, 'keyring.json'); // never written — ENOENT is the point
+
+    const usersRoot = await mkdtemp(join(tmpdir(), 'securegit-users-'));
+    const versionFile = join(usersRoot, 'proc-version');
+    await writeFile(versionFile, 'Linux version 6.6.87.2-microsoft-standard-WSL2\n');
+    const candidateHome = join(usersRoot, 'alice');
+    await mkdir(join(candidateHome, '.securegit', 'repos', repoId), { recursive: true });
+    await writeFile(join(candidateHome, '.securegit', 'repos', repoId, 'keyring.json'), '{}');
+
+    try {
+      await expect(readKeyringFile(path, { usersRoot, versionFile })).rejects.toThrow(
+        new RegExp(`found:.*${candidateHome}.*export SECUREGIT_HOME=${candidateHome}`, 's'),
+      );
+    } finally {
+      await rm(usersRoot, { recursive: true, force: true });
+    }
   });
 
   it('reading a corrupted (non-JSON) file throws a friendly KeyringError', async () => {
@@ -693,6 +726,13 @@ describe('findLikelyWindowsHome()', () => {
     await writeFile(path, content);
     return path;
   }
+
+  it('returns null when the version file cannot be read at all (not Linux, or genuinely missing)', async () => {
+    usersRoot = await mkdtemp(join(tmpdir(), 'securegit-users-'));
+    versionFile = join(tmpdir(), 'securegit-proc-version-does-not-exist');
+
+    expect(await findLikelyWindowsHome('repo-a', { usersRoot, versionFile })).toBeNull();
+  });
 
   it('returns null when the version file does not mention microsoft (not WSL)', async () => {
     usersRoot = await mkdtemp(join(tmpdir(), 'securegit-users-'));

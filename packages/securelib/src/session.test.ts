@@ -98,6 +98,15 @@ describe('writeSession() / readSession()', () => {
     expect(await readdir(join(dir, 'nested'))).toEqual([`${REPO}.session`]);
   });
 
+  it('cleans up its temp file when the final rename fails', async () => {
+    await mkdir(sessionPath, { recursive: true }); // occupies the target path itself, so rename onto it fails
+    await expect(
+      writeSession({ repoId: REPO, path: sessionPath, entries: ENTRIES, current: KEY_ID }),
+    ).rejects.toThrow();
+    const entries = await readdir(join(dir, 'nested'));
+    expect(entries).toEqual([`${REPO}.session`]); // only the directory — no leftover tmp-*
+  });
+
   it('fully overwrites a previous session for the same repo', async () => {
     await writeSession({ repoId: REPO, path: sessionPath, entries: ENTRIES, current: KEY_ID });
     const rmk2 = Buffer.alloc(32, 0x77);

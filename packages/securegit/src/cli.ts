@@ -141,7 +141,11 @@ export interface CliIO {
    * receives plaintext or key material.
    */
   info: (message: string) => void;
-  now?: () => Date;
+  // The `| undefined` (beyond plain optionality) is deliberate under this
+  // project's `exactOptionalPropertyTypes` — tests assign `now: undefined`
+  // explicitly to assert the real, no-injected-clock fallback path, as
+  // distinct from simply omitting the key.
+  now?: (() => Date) | undefined;
 }
 
 const USAGE =
@@ -2593,7 +2597,11 @@ export interface FilterProcessIO {
   /** Already guarded — see `installStdoutGuard` in `process.ts`. */
   write: (chunk: Buffer) => void;
   stderr: (message: string) => void;
-  now?: () => Date;
+  // The `| undefined` (beyond plain optionality) is deliberate under this
+  // project's `exactOptionalPropertyTypes` — tests assign `now: undefined`
+  // explicitly to assert the real, no-injected-clock fallback path, as
+  // distinct from simply omitting the key.
+  now?: (() => Date) | undefined;
 }
 
 export async function runFilterProcess(io: FilterProcessIO): Promise<number> {

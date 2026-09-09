@@ -13,7 +13,10 @@
     "clean": "npm run clean --workspaces --if-present",
     "typecheck": "npm run build:securelib && npm run build:securelib-piv && npm run build:securelib-fido2 && npm run typecheck --workspaces",
     "test": "npm run build:securelib && npm run build:securelib-piv && npm run build:securelib-fido2 && npm run test --workspaces",
+    "test:coverage": "npm run build:securelib && npm run build:securelib-piv && npm run build:securelib-fido2 && npm run test:coverage --workspaces",
     "test:integration": "npm run build:securelib && npm run test:integration --workspace=packages/securegit",
+    "coverage:badge": "node scripts/generate-coverage-badge.mjs",
+    "audit:badge": "node scripts/generate-audit-badge.mjs",
     "chaos:sandbox": "docker compose -f chaos/docker-compose.yml up --build -d && docker compose -f chaos/docker-compose.yml wait verifier; docker compose -f chaos/docker-compose.yml logs verifier; docker compose -f chaos/docker-compose.yml down -v"
   },
   "author": "TRINORIS",

@@ -1,16 +1,27 @@
-# `@trinoris/securegit`
+# `@trinoris/secure` workspace
 
 [![Build CI](https://github.com/trinoris/secure/actions/workflows/build-ci.yml/badge.svg)](https://github.com/trinoris/secure/actions/workflows/build-ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://trinoris.github.io/secure/coverage-badge.json)](https://github.com/trinoris/secure/actions/workflows/build-ci.yml)
+[![Audit](https://img.shields.io/endpoint?url=https://trinoris.github.io/secure/audit-badge.json)](https://github.com/trinoris/secure/actions/workflows/build-ci.yml)
 [![CodeQL](https://github.com/trinoris/secure/actions/workflows/codeql.yml/badge.svg)](https://github.com/trinoris/secure/actions/workflows/codeql.yml)
 [![Secret Scan](https://github.com/trinoris/secure/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/trinoris/secure/actions/workflows/gitleaks.yml)
 [![Release](https://github.com/trinoris/secure/actions/workflows/release.yml/badge.svg)](https://github.com/trinoris/secure/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Chaos Match Viewer](https://img.shields.io/badge/chaos%20sandbox-live%20replay-3ecf8e)](https://trinoris.github.io/secure/)
 
-Client-side Git encryption: a transparent `clean`/`smudge` filter that
-encrypts selected files on your own workstation, so the repository — every
-commit, every push, every mirror, every backup — is AES-256-GCM ciphertext
-everywhere it goes afterward.
+This repository is a workspace of four packages, not one package with a
+misleading name: `@trinoris/securelib` (the shared, dependency-free core
+that actually holds keys), `@trinoris/securegit` (the Git integration most
+users will actually run), and `@trinoris/securelib-piv`/`-fido2` (hardware
+key-provider transports, verified against real YubiKeys). See
+[Packages](#packages) below for what each one does and its individual
+coverage/audit status.
+
+`@trinoris/securegit` is the flagship consumer, and what the rest of this
+README mostly talks about: client-side Git encryption via a transparent
+`clean`/`smudge` filter that encrypts selected files on your own
+workstation, so the repository — every commit, every push, every mirror,
+every backup — is AES-256-GCM ciphertext everywhere it goes afterward.
 
 > **The boundary is the process, not the network.** Plaintext exists in the
 > working tree, on a machine that holds a key. `.git/objects`, the remote,
@@ -33,6 +44,28 @@ git add . && git commit -m "hello" && git push
 
 `git add`, `git status`, `git diff`, `git log -p` all behave normally — the
 filter is invisible until you go looking for it.
+
+## Packages
+
+| Package | Purpose | Coverage | Audit |
+| --- | --- | --- | --- |
+| [`@trinoris/securelib`](packages/securelib) | The shared core: envelope format, key derivation, the `KeyProvider` port, multi-recipient sharing, rotation and recovery-code primitives, identity keypairs. Zero runtime dependencies — the package that actually holds keys. | [![securelib coverage](https://img.shields.io/endpoint?url=https://trinoris.github.io/secure/coverage-badge-securelib.json)](packages/securelib) | [![securelib audit](https://img.shields.io/endpoint?url=https://trinoris.github.io/secure/audit-badge-securelib.json)](packages/securelib) |
+| [`@trinoris/securegit`](packages/securegit) | The Git integration: the clean/smudge/textconv/merge filter, `.gitattributes` handling, the CLI, `verify`'s history-walking, the chaos sandbox. From a user's perspective this *is* "securegit". | [![securegit coverage](https://img.shields.io/endpoint?url=https://trinoris.github.io/secure/coverage-badge-securegit.json)](packages/securegit) | [![securegit audit](https://img.shields.io/endpoint?url=https://trinoris.github.io/secure/audit-badge-securegit.json)](packages/securegit) |
+| [`@trinoris/securelib-piv`](packages/securelib-piv) | A real `KeyProvider` transport for YubiKey/PIV smartcards — built and verified against physical hardware. Shells out to already-installed system tools (`ykman`, OpenSC's `pkcs11-tool`) rather than a native PC/SC addon. | [![securelib-piv coverage](https://img.shields.io/endpoint?url=https://trinoris.github.io/secure/coverage-badge-securelib-piv.json)](packages/securelib-piv) | [![securelib-piv audit](https://img.shields.io/endpoint?url=https://trinoris.github.io/secure/audit-badge-securelib-piv.json)](packages/securelib-piv) |
+| [`@trinoris/securelib-fido2`](packages/securelib-fido2) | The FIDO2/CTAP2 equivalent, via the `hmac-secret` extension — same hardware-verified standard, shells out to libfido2's CLI tools. | [![securelib-fido2 coverage](https://img.shields.io/endpoint?url=https://trinoris.github.io/secure/coverage-badge-securelib-fido2.json)](packages/securelib-fido2) | [![securelib-fido2 audit](https://img.shields.io/endpoint?url=https://trinoris.github.io/secure/audit-badge-securelib-fido2.json)](packages/securelib-fido2) |
+
+`securelib-piv` and `securelib-fido2` are peer dependents of `securelib`,
+loaded by it at runtime via a dynamic-import registry
+([06-key-provider-port.md](specs/securegit/06-key-provider-port.md)) —
+neither is a build-time dependency of `securegit` itself. See
+[docs/securegit/01-architecture.md](docs/securegit/01-architecture.md) for
+the full reasoning behind the split. Coverage and audit badges above are
+per-package (each package has its own `vitest.config.ts` branch-coverage
+threshold and is audited independently — see [Development](#development));
+a single static analysis pass (CodeQL, badge above) covers every package's
+TypeScript in one run, since CodeQL has no notion of workspace boundaries.
+All badges refresh nightly (and on manual dispatch), same cadence as the
+chaos sandbox site they're published alongside.
 
 ## Why this matters
 
@@ -107,11 +140,13 @@ see `.github/workflows/release.yml`). For now, build from source:
 
 ```sh
 git clone git@github.com:trinoris/secure.git
-cd securegit
+cd secure
 npm ci
 npm run build
-npm link          # puts `securegit` on your PATH, or run
-                   # node dist/bin/securegit.js directly
+npm link --workspace=packages/securegit  # puts `securegit` on your PATH,
+                                          # or run node
+                                          # packages/securegit/dist/bin/securegit.js
+                                          # directly
 ```
 
 Once a `v*` tag is pushed, releases publish to GitHub Packages under the
@@ -183,17 +218,27 @@ comparison is viewable at `https://trinoris.github.io/secure/`.
 
 ```sh
 npm ci
-npm run build              # tsc -p tsconfig.build.json
+npm run build              # tsc -p tsconfig.build.json, in dependency order
 npm test                   # unit tests (vitest)
+npm run test:coverage      # unit tests + each package's branch-coverage gate
 npm run test:integration   # against a real git binary
 npm run typecheck
 ```
 
-CI runs the build/test/`npm audit` gate on every push and PR
-([build-ci.yml](.github/workflows/build-ci.yml)), CodeQL static analysis and
-secret scanning alongside it ([codeql.yml](.github/workflows/codeql.yml),
+[build-ci.yml](.github/workflows/build-ci.yml) mirrors this repo's real
+package dependency graph as a job DAG, rather than one job building and
+testing all four packages in sequence: `audit` (`npm audit
+--audit-level=high` against the whole workspace — independent, needs
+nothing built) and `build-securelib` run first; once `securelib` is green,
+`build-securelib-piv`, `build-securelib-fido2`, and `build-securegit` build
+and test in parallel, each gated on its own package's vitest branch-coverage
+threshold (`coverage.thresholds.branches` in that package's
+`vitest.config.ts`) failing the job the moment real coverage drops below
+it. CodeQL static analysis and secret scanning run alongside it
+([codeql.yml](.github/workflows/codeql.yml),
 [gitleaks.yml](.github/workflows/gitleaks.yml)), and the chaos sandbox
-nightly.
+plus the coverage/audit badges above (`metrics-badges` job) publish
+nightly (and on manual dispatch) to the same GitHub Pages site.
 
 ## Security
 

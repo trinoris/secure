@@ -86,6 +86,14 @@ describe('formatRecoveryCode() / parseRecoveryCode()', () => {
   it('rejects a garbage string', () => {
     expect(() => parseRecoveryCode('not a recovery code')).toThrow(RecoveryError);
   });
+
+  it('rejects a character outside the Crockford alphabet even after O/I/L folding (U is excluded, not folded)', () => {
+    expect(() => parseRecoveryCode('UUUU-UUUU-UUUU-UUUU')).toThrow(/not valid — check for transcription errors/);
+  });
+
+  it('rejects the wrong code length (formatRecoveryCode)', () => {
+    expect(() => formatRecoveryCode(Buffer.alloc(31))).toThrow(/must be 32 bytes, got 31/);
+  });
 });
 
 describe('exportRecovery() / importRecovery()', () => {
@@ -116,6 +124,16 @@ describe('exportRecovery() / importRecovery()', () => {
   it('is bound to repoId — fails against a different repository', () => {
     const { code, file } = exportRecovery({ repoId: REPO_ID, generations: [{ generation: 1, rmk: RMK1 }] });
     expect(() => importRecovery(file, code, 'a-different-repo')).toThrow(RecoveryError);
+  });
+
+  it('silently skips a non-integer generation key rather than throwing (defensive, against a hand-edited file)', () => {
+    const { code, file } = exportRecovery({ repoId: REPO_ID, generations: [{ generation: 1, rmk: RMK1 }] });
+    const corrupted: typeof file = {
+      ...file,
+      generations: { ...file.generations, abc: file.generations['1']! },
+    };
+    const recovered = importRecovery(corrupted, code, REPO_ID);
+    expect(recovered.map((r) => r.generation)).toEqual([1]);
   });
 
   it('two exports of the same generations use different codes and different ciphertext', () => {

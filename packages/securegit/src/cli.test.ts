@@ -65,6 +65,64 @@ function harness(overrides: Partial<CliIO> = {}) {
   };
 }
 
+describe('default clock: omitting io.now falls back to the wall clock (the real production path — every harness() test above/below injects one explicitly)', () => {
+  it('loadKeys() via SECUREGIT_SESSION_KEY', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    const config = JSON.parse(await readFile(join(dir, '.securegit', 'config.json'), 'utf8')) as {
+      repoId: string;
+    };
+    const sessionKey = (await readFile(resolveSessionPath(config.repoId, {}, home))).toString('base64');
+    expect(
+      await h.run(['status'], { env: { SECUREGIT_SESSION_KEY: sessionKey }, now: undefined }),
+    ).toBe(0);
+  });
+
+  it('loadKeys() via the readSession() fallback', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    expect(await h.run(['status'], { env: {}, now: undefined })).toBe(0);
+  });
+
+  it('writeUnlockSession() (a plain unlock)', async () => {
+    const h = harness();
+    await h.run(['init']);
+    expect(await h.run(['unlock'], { now: undefined })).toBe(0);
+  });
+
+  it("add-recipient's addedAt", async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    const otherHome = await mkdtemp(join(tmpdir(), 'securegit-cli-now-identity-'));
+    const other = harness({ home: otherHome });
+    await other.run(['identity', 'init']);
+    const identity = JSON.parse(await readFile(join(otherHome, '.securegit', 'identity.json'), 'utf8'));
+    expect(await h.run(['key', 'add-recipient', identity.publicKey], { now: undefined })).toBe(0);
+  });
+
+  it("remove-recipient's removedAt", async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    const otherHome = await mkdtemp(join(tmpdir(), 'securegit-cli-now-identity-'));
+    const other = harness({ home: otherHome });
+    await other.run(['identity', 'init']);
+    const identity = JSON.parse(await readFile(join(otherHome, '.securegit', 'identity.json'), 'utf8'));
+    await h.run(['key', 'add-recipient', identity.publicKey]);
+    expect(await h.run(['key', 'remove-recipient', identity.fingerprint], { now: undefined })).toBe(0);
+  });
+
+  it("export-recovery's timestamp", async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    expect(await h.run(['key', 'export-recovery', '--out', 'r.json'], { now: undefined })).toBe(0);
+  });
+});
+
 describe('init', () => {
   it('succeeds and writes a keyring', async () => {
     const h = harness();
@@ -243,9 +301,27 @@ describe('install', () => {
     const { stdout } = await git('git', ['config', '--local', '--get', 'filter.securegit.clean'], { cwd: dir });
     expect(stdout.trim()).toBe('node /opt/securegit/dist/bin/securegit.js clean -- %f');
   });
+
+  it('--process installs the long-lived filter-process form and says so', async () => {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const git = promisify(execFile);
+    await git('git', ['init', '--quiet'], { cwd: dir });
+    const h = harness();
+    expect(await h.run(['install', '--process'])).toBe(0);
+    expect(h.infoText()).toContain('(process form)');
+    const { stdout } = await git('git', ['config', '--local', '--get', 'filter.securegit.process'], { cwd: dir });
+    expect(stdout.trim().length).toBeGreaterThan(0);
+  });
 });
 
 describe('protect', () => {
+  it('exits usage when .gitattributes cannot be written (e.g. a directory occupies the path)', async () => {
+    const h = harness();
+    await mkdir(join(dir, '.gitattributes'));
+    expect(await h.run(['protect', '.env'])).toBe(4);
+  });
+
   it('writes .gitattributes', async () => {
     const h = harness();
     expect(await h.run(['protect', '.env'])).toBe(0);
@@ -265,6 +341,12 @@ describe('protect', () => {
 });
 
 describe('unprotect', () => {
+  it('exits usage when .gitattributes cannot be read/written (e.g. a directory occupies the path)', async () => {
+    const h = harness();
+    await mkdir(join(dir, '.gitattributes'));
+    expect(await h.run(['unprotect', '.env'])).toBe(4);
+  });
+
   it('exits 4 with no patterns', async () => {
     const h = harness();
     expect(await h.run(['unprotect'])).toBe(4);
@@ -307,6 +389,61 @@ describe('unlock / lock / status', () => {
     expect(await h.run(['status'], { env: {} })).toBe(1);
   });
 
+  it('SECUREGIT_PASSPHRASE with no local keyring for this home is locked, not a throw (keySourceFromPassphraseEnv)', async () => {
+    await harness().run(['init']); // real config for `dir`, keyring under the shared `home`
+    const keylessHome = await mkdtemp(join(tmpdir(), 'securegit-cli-keyless-'));
+    const h = harness({ home: keylessHome });
+    expect(await h.run(['status'])).toBe(1);
+  });
+
+  it('SECUREGIT_PASSPHRASE against a keyring wrapped for a different repoId is locked, not a throw', async () => {
+    const a = harness();
+    await a.run(['init']);
+    const aConfig = JSON.parse(await readFile(join(dir, '.securegit', 'config.json'), 'utf8'));
+
+    // A second, unrelated repository, in a different home — its own
+    // genuinely different, independently random repoId and keyring.
+    const otherDir = await mkdtemp(join(tmpdir(), 'securegit-cli-other-repo-'));
+    await mkdir(join(otherDir, '.git'));
+    const otherHome = await mkdtemp(join(tmpdir(), 'securegit-cli-other-home-'));
+    const b = harness({ cwd: otherDir, home: otherHome });
+    await b.run(['init']);
+    const bConfig = JSON.parse(await readFile(join(otherDir, '.securegit', 'config.json'), 'utf8'));
+
+    // Place B's real, validly-wrapped keyring at the path A's home would
+    // resolve for A's own repoId — same shape as a keyring file copied
+    // between two unrelated repositories by mistake.
+    const bKeyring = await readFile(
+      join(otherHome, '.securegit', 'repos', bConfig.repoId, 'keyring.json'),
+    );
+    await mkdir(join(home, '.securegit', 'repos', aConfig.repoId), { recursive: true });
+    await writeFile(join(home, '.securegit', 'repos', aConfig.repoId, 'keyring.json'), bKeyring);
+
+    expect(await a.run(['status'])).toBe(1);
+  });
+
+  it('unlock (unlike status) exits misconfigured against a keyring wrapped for a different repoId — it unlocks via unlockKeyring() directly, not loadKeys()', async () => {
+    const a = harness();
+    await a.run(['init']);
+    const aConfig = JSON.parse(await readFile(join(dir, '.securegit', 'config.json'), 'utf8'));
+
+    const otherDir = await mkdtemp(join(tmpdir(), 'securegit-cli-other-repo-unlock-'));
+    await mkdir(join(otherDir, '.git'));
+    const otherHome = await mkdtemp(join(tmpdir(), 'securegit-cli-other-home-unlock-'));
+    const b = harness({ cwd: otherDir, home: otherHome });
+    await b.run(['init']);
+    const bConfig = JSON.parse(await readFile(join(otherDir, '.securegit', 'config.json'), 'utf8'));
+
+    const bKeyring = await readFile(
+      join(otherHome, '.securegit', 'repos', bConfig.repoId, 'keyring.json'),
+    );
+    await mkdir(join(home, '.securegit', 'repos', aConfig.repoId), { recursive: true });
+    await writeFile(join(home, '.securegit', 'repos', aConfig.repoId, 'keyring.json'), bKeyring);
+
+    expect(await a.run(['unlock'])).toBe(2);
+    expect(a.stderrText()).toContain('belongs to repository');
+  });
+
   it('unlock exits 0 with the right passphrase, status then exits 0', async () => {
     const h = harness();
     await h.run(['init']);
@@ -345,6 +482,54 @@ describe('unlock / lock / status', () => {
     expect(await h.run(['unlock'])).toBe(0);
   });
 
+  it('builds real yubikey-piv/yubikey-fido2 providers when the keyring names those slots, without ever unwrapping them', async () => {
+    // The passphrase-file slot stays first and succeeds, so unlockKeyring()
+    // breaks before ever calling unwrap() on the synthetic hardware slots
+    // below — this proves providersFor() actually reaches loadProvider()
+    // for both companion packages (both are real workspace packages here,
+    // so loading them succeeds) without touching any real hardware.
+    const h = harness();
+    await h.run(['init']);
+    const config = JSON.parse(
+      await readFile(join(dir, '.securegit', 'config.json'), 'utf8'),
+    ) as { repoId: string };
+    const keyringPath = resolveKeyringPath(config.repoId, home);
+    const file = JSON.parse(await readFile(keyringPath, 'utf8')) as {
+      generations: { wrapped: { provider: string; state: unknown; payload: unknown }[] }[];
+    };
+    file.generations[0]!.wrapped.push(
+      { provider: 'yubikey-piv', state: { slot: '9d' }, payload: { ciphertext: 'aa', nonce: 'bb' } },
+      { provider: 'yubikey-fido2', state: {}, payload: { ciphertext: 'aa', nonce: 'bb' } },
+    );
+    await writeFile(keyringPath, JSON.stringify(file));
+
+    expect(await h.run(['unlock'])).toBe(0);
+    expect(await h.run(['status'])).toBe(0);
+  });
+
+  it('passphraseProvidersFor() falls back to a dummy passphrase-file id when the keyring holds none at all', async () => {
+    // A keyring whose only slot is hardware-backed: SECUREGIT_PASSPHRASE
+    // still has to produce *some* provider list (never throw), and since
+    // none of them will ever match a non-passphrase-file slot, the
+    // dummy provider added here is guaranteed to fail every attempt —
+    // proving the fallback is safe, not just present.
+    const h = harness();
+    await h.run(['init']);
+    const config = JSON.parse(
+      await readFile(join(dir, '.securegit', 'config.json'), 'utf8'),
+    ) as { repoId: string };
+    const keyringPath = resolveKeyringPath(config.repoId, home);
+    const file = JSON.parse(await readFile(keyringPath, 'utf8')) as {
+      generations: { wrapped: { provider: string; state: unknown; payload: unknown }[] }[];
+    };
+    file.generations[0]!.wrapped = [
+      { provider: 'yubikey-piv', state: { slot: '9d' }, payload: { ciphertext: 'aa', nonce: 'bb' } },
+    ];
+    await writeFile(keyringPath, JSON.stringify(file));
+
+    expect(await h.run(['status'])).toBe(1);
+  });
+
   it('unlock exits 1 with the wrong passphrase', async () => {
     const h = harness();
     await h.run(['init']);
@@ -354,6 +539,11 @@ describe('unlock / lock / status', () => {
   it('unlock exits 2 before init', async () => {
     const h = harness();
     expect(await h.run(['unlock'])).toBe(2);
+  });
+
+  it('lock exits 2 before init', async () => {
+    const h = harness();
+    expect(await h.run(['lock'])).toBe(2);
   });
 
   it('lock returns status to locked', async () => {
@@ -443,6 +633,23 @@ describe('unlock / lock / status', () => {
     expect(parsed.recoveryPaths).toEqual({ paths: 1, hasExport: false, warn: true });
   });
 
+  it('pluralizes "recovery paths" when there are zero, not just when there is more than one', async () => {
+    const h = harness();
+    await h.run(['init']);
+    const config = JSON.parse(
+      await readFile(join(dir, '.securegit', 'config.json'), 'utf8'),
+    ) as { repoId: string };
+    const keyringPath = resolveKeyringPath(config.repoId, home);
+    const file = JSON.parse(await readFile(keyringPath, 'utf8')) as {
+      generations: { generation: number; wrapped: unknown[] }[];
+    };
+    file.generations[0]!.wrapped = [];
+    await writeFile(keyringPath, JSON.stringify(file));
+
+    await h.run(['status']);
+    expect(h.stderrText()).toMatch(/recovery.*⚠.*0 recovery paths/);
+  });
+
   it('stops warning once a second recipient covers the current generation', async () => {
     const h = harness();
     await h.run(['init']);
@@ -470,6 +677,19 @@ describe('identity', () => {
     const file = JSON.parse(await readFile(join(home, '.securegit', 'identity.json'), 'utf8'));
     expect(file.label).toBe('laptop');
     expect(file.publicKey.startsWith('SGPUB1')).toBe(true);
+  });
+
+  it('init treats a trailing --label with no value as an empty label, not a crash', async () => {
+    const h = harness();
+    expect(await h.run(['identity', 'init', '--label'])).toBe(0);
+    const file = JSON.parse(await readFile(join(home, '.securegit', 'identity.json'), 'utf8'));
+    expect(file.label).toBe('');
+  });
+
+  it('init rejects a passphrase under 12 characters, without creating an identity', async () => {
+    const h = harness({ env: { SECUREGIT_PASSPHRASE: 'short' } });
+    expect(await h.run(['identity', 'init'])).toBe(4);
+    await expect(readFile(join(home, '.securegit', 'identity.json'), 'utf8')).rejects.toThrow();
   });
 
   it('init exits usage the second time, without touching the first identity', async () => {
@@ -547,6 +767,18 @@ describe('key add-recipient / key remove-recipient / unlock via a recipient file
   const PATH = 'config/production.json';
   const PT = Buffer.from('{"timeout":30}\n');
 
+  it('add-recipient with no pubkey argument exits usage', async () => {
+    const h = harness();
+    expect(await h.run(['key', 'add-recipient'])).toBe(4);
+    expect(h.stderrText()).toContain('usage: securegit key add-recipient');
+  });
+
+  it('remove-recipient with no fingerprint argument exits usage', async () => {
+    const h = harness();
+    expect(await h.run(['key', 'remove-recipient'])).toBe(4);
+    expect(h.stderrText()).toContain('usage: securegit key remove-recipient');
+  });
+
   it('add-recipient exits locked when the repository is locked', async () => {
     const h = harness();
     await h.run(['init']);
@@ -556,6 +788,21 @@ describe('key add-recipient / key remove-recipient / unlock via a recipient file
       await readFile(join(other.io.home, '.securegit', 'identity.json'), 'utf8'),
     );
     expect(await h.run(['key', 'add-recipient', identity.publicKey], { env: {} })).toBe(1);
+  });
+
+  it('add-recipient treats a trailing --label with no value as an empty label, not a crash', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    const otherHome = await mkdtemp(join(tmpdir(), 'securegit-cli-identity-'));
+    const other = harness({ home: otherHome });
+    await other.run(['identity', 'init']);
+    const identity = JSON.parse(await readFile(join(otherHome, '.securegit', 'identity.json'), 'utf8'));
+    expect(await h.run(['key', 'add-recipient', identity.publicKey, '--label'])).toBe(0);
+    const recipientFile = JSON.parse(
+      await readFile(join(dir, '.securegit', 'recipients', `${identity.fingerprint}.json`), 'utf8'),
+    );
+    expect(recipientFile.label).toBe('');
   });
 
   it('add-recipient exits usage on a malformed public key', async () => {
@@ -667,6 +914,28 @@ describe('key add-recipient / key remove-recipient / unlock via a recipient file
     expect(JSON.stringify(log)).not.toContain('payload'); // never the still-wrapped key material
   });
 
+  it('remove-recipient skips a non-integer generation key when building the removed-recipients log entry', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    const otherHome = await mkdtemp(join(tmpdir(), 'securegit-cli-identity-'));
+    const other = harness({ home: otherHome });
+    await other.run(['identity', 'init']);
+    const identity = JSON.parse(await readFile(join(otherHome, '.securegit', 'identity.json'), 'utf8'));
+
+    await h.run(['key', 'add-recipient', identity.publicKey, '--label', 'contractor']);
+    const recipientFile = join(dir, '.securegit', 'recipients', `${identity.fingerprint}.json`);
+    const file = JSON.parse(await readFile(recipientFile, 'utf8'));
+    file.keys['not-a-generation'] = file.keys['1'];
+    await writeFile(recipientFile, JSON.stringify(file));
+
+    expect(await h.run(['key', 'remove-recipient', identity.fingerprint])).toBe(0);
+    const log = JSON.parse(
+      await readFile(join(dir, '.securegit', 'removed-recipients.json'), 'utf8'),
+    );
+    expect(log[0].generations).toEqual([1]);
+  });
+
   it('end-to-end: a second identity joins via add-recipient, unlocks, and decrypts', async () => {
     // "Machine A" — already has full repository access.
     const a = harness();
@@ -707,6 +976,54 @@ describe('key add-recipient / key remove-recipient / unlock via a recipient file
     await rm(join(home, '.securegit'), { recursive: true, force: true });
     expect(await h.run(['unlock'])).toBe(2);
     expect(h.stderrText()).toContain('identity init');
+  });
+
+  it('unlock via recipient exits locked on the wrong passphrase for the local identity', async () => {
+    const a = harness();
+    await a.run(['init']);
+    await a.run(['unlock']);
+    const bHome = await mkdtemp(join(tmpdir(), 'securegit-cli-identity-'));
+    const b = harness({ home: bHome });
+    await b.run(['identity', 'init']);
+    const identity = JSON.parse(await readFile(join(bHome, '.securegit', 'identity.json'), 'utf8'));
+    await a.run(['key', 'add-recipient', identity.publicKey]);
+
+    expect(
+      await b.run(['unlock'], { env: { SECUREGIT_PASSPHRASE: 'a totally different passphrase' } }),
+    ).toBe(1);
+  });
+
+  it('unlock via recipient exits misconfigured when no recipient file exists for this identity', async () => {
+    await harness().run(['init']);
+    // No local keyring for this home at all, but a real identity — so
+    // unlockViaRecipient() is reached and looks for a recipient file that
+    // was never actually created.
+    const bHome = await mkdtemp(join(tmpdir(), 'securegit-cli-identity-'));
+    const b = harness({ home: bHome });
+    await b.run(['identity', 'init']);
+    expect(await b.run(['unlock'])).toBe(2);
+    expect(b.stderrText()).toContain('no recipient file for this identity');
+  });
+
+  it('unlock via recipient exits locked when the recipient file covers no generation this identity can decrypt', async () => {
+    const a = harness();
+    await a.run(['init']);
+    await a.run(['unlock']);
+    const bHome = await mkdtemp(join(tmpdir(), 'securegit-cli-identity-'));
+    const b = harness({ home: bHome });
+    await b.run(['identity', 'init']);
+    const identityB = JSON.parse(await readFile(join(bHome, '.securegit', 'identity.json'), 'utf8'));
+    await a.run(['key', 'add-recipient', identityB.publicKey]);
+
+    // Corrupt the recipient file on disk so it no longer covers generation 1
+    // for identity B — same shape as a recipient file whose only wrapped
+    // generations were all superseded by a later rotation.
+    const recipientFilePath = join(dir, '.securegit', 'recipients', `${identityB.fingerprint}.json`);
+    const recipientFile = JSON.parse(await readFile(recipientFilePath, 'utf8'));
+    recipientFile.keys = {};
+    await writeFile(recipientFilePath, JSON.stringify(recipientFile));
+
+    expect(await b.run(['unlock'])).toBe(1);
   });
 });
 
@@ -760,6 +1077,39 @@ describe('key export-recovery / key import-recovery', () => {
     const h = harness();
     await h.run(['init']);
     expect(await h.run(['key', 'import-recovery', '--in', 'nope.json'])).toBe(4);
+  });
+
+  it('import-recovery exits misconfigured before init (no config to check repoId against)', async () => {
+    const h = harness();
+    await writeFile(join(dir, 'r.json'), JSON.stringify({ version: 1, repoId: 'x', format: 1, generations: {} }));
+    expect(await h.run(['key', 'import-recovery', '--in', 'r.json'])).toBe(2);
+  });
+
+  it('import-recovery exits usage on a malformed (not just wrong) code', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    await h.run(['key', 'export-recovery', '--out', 'r.json']);
+    expect(
+      await h.run(['key', 'import-recovery', '--in', 'r.json'], {
+        env: { SECUREGIT_RECOVERY_CODE: 'not a recovery code', SECUREGIT_PASSPHRASE: 'a fresh local passphrase' },
+      }),
+    ).toBe(4);
+  });
+
+  it('import-recovery exits usage when the new local passphrase is under 12 characters', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    await h.run(['key', 'export-recovery', '--out', 'r.json']);
+    const code = h.stderrText().match(/([0-9A-Z]{4}-){10,}[0-9A-Z]{1,4}/)![0];
+
+    const importHome = await mkdtemp(join(tmpdir(), 'securegit-cli-import-home-'));
+    const short = harness({
+      home: importHome,
+      env: { SECUREGIT_RECOVERY_CODE: code, SECUREGIT_PASSPHRASE: 'short' },
+    });
+    expect(await short.run(['key', 'import-recovery', '--in', 'r.json'])).toBe(4);
   });
 
   it('import-recovery exits misconfigured when the file belongs to a different repository', async () => {
@@ -837,6 +1187,23 @@ describe('key export-recovery / key import-recovery', () => {
 
     const bHome = await mkdtemp(join(tmpdir(), 'securegit-cli-import-home-'));
     const b = harness({ home: bHome, env: {} });
+    expect(
+      await b.run(['key', 'import-recovery', '--in', 'r.json'], {
+        stdin: Buffer.from(`${code}\na fresh passphrase from stdin\n`),
+      }),
+    ).toBe(0);
+  });
+
+  it('import-recovery falls back to stdin when the env vars are present but empty, same as unset', async () => {
+    const a = harness();
+    await a.run(['init']);
+    await a.run(['unlock']);
+    await a.run(['key', 'export-recovery', '--out', 'r.json']);
+    const codeMatch = a.stderrText().match(/([0-9A-Z]{4}-){10,}[0-9A-Z]{1,4}/);
+    const code = codeMatch![0];
+
+    const bHome = await mkdtemp(join(tmpdir(), 'securegit-cli-import-home-empty-env-'));
+    const b = harness({ home: bHome, env: { SECUREGIT_RECOVERY_CODE: '', SECUREGIT_PASSPHRASE: '' } });
     expect(
       await b.run(['key', 'import-recovery', '--in', 'r.json'], {
         stdin: Buffer.from(`${code}\na fresh passphrase from stdin\n`),
@@ -1162,6 +1529,23 @@ describe('clean / smudge', () => {
       expect(await fresh.run(['status'])).toBe(1);
     });
 
+    it('the wrong passphrase for the identity file is locked, not a throw', async () => {
+      const bHome = await mkdtemp(join(tmpdir(), 'securegit-cli-identity-file-'));
+      const b = harness({ home: bHome });
+      await b.run(['identity', 'init']); // default harness passphrase: "correct horse battery staple"
+
+      const fresh = harness();
+      await fresh.run(['init']);
+      expect(
+        await fresh.run(['status'], {
+          env: {
+            SECUREGIT_IDENTITY_FILE: join(bHome, '.securegit', 'identity.json'),
+            SECUREGIT_PASSPHRASE: 'a totally different passphrase',
+          },
+        }),
+      ).toBe(1);
+    });
+
     it('is ignored without SECUREGIT_PASSPHRASE — falls through to the session file', async () => {
       const h = harness();
       await h.run(['init']);
@@ -1196,6 +1580,35 @@ describe('clean / smudge', () => {
 
 describe('key add-provider / key remove-provider / key list / key list-recipients', () => {
   const BACKUP_PASSPHRASE = 'a second, independent secret!!';
+
+  it('remove-provider with no id argument exits usage', async () => {
+    const h = harness();
+    expect(await h.run(['key', 'remove-provider'])).toBe(4);
+    expect(h.stderrText()).toContain('usage: securegit key remove-provider');
+  });
+
+  it('remove-provider exits misconfigured before init', async () => {
+    const h = harness();
+    expect(await h.run(['key', 'remove-provider', 'passphrase-file'])).toBe(2);
+  });
+
+  it('remove-provider exits misconfigured when config exists but this home has no local keyring', async () => {
+    await harness().run(['init']); // real config for `dir`, keyring under the shared `home`
+    const keylessHome = await mkdtemp(join(tmpdir(), 'securegit-cli-remove-provider-keyless-'));
+    const h = harness({ home: keylessHome });
+    expect(await h.run(['key', 'remove-provider', 'passphrase-file'])).toBe(2);
+  });
+
+  it('an unknown key subcommand exits usage, naming it', async () => {
+    const h = harness();
+    expect(await h.run(['key', 'bogus-subcommand'])).toBe(4);
+    expect(h.stderrText()).toContain("unknown key subcommand 'bogus-subcommand'");
+  });
+
+  it('bare `key` with no subcommand exits usage', async () => {
+    const h = harness();
+    expect(await h.run(['key'])).toBe(4);
+  });
 
   it('add-provider wraps every generation for a second, independent passphrase, unlockable on its own', async () => {
     const h = harness();
@@ -1248,12 +1661,56 @@ describe('key add-provider / key remove-provider / key list / key list-recipient
     expect(h.stderrText()).toContain('passphrase-file, yubikey-piv, yubikey-fido2');
   });
 
+  it('add-provider with no type argument at all exits usage', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    expect(await h.run(['key', 'add-provider'])).toBe(4);
+    expect(h.stderrText()).toContain('usage: securegit key add-provider');
+  });
+
+  it('add-provider exits misconfigured when this session is unlocked but this home has no local keyring — the join-via-recipient shape', async () => {
+    const a = harness();
+    await a.run(['init']);
+    await a.run(['unlock']);
+
+    const bHome = await mkdtemp(join(tmpdir(), 'securegit-cli-add-provider-recipient-'));
+    const b = harness({ home: bHome });
+    await b.run(['identity', 'init']);
+    const identity = JSON.parse(await readFile(join(bHome, '.securegit', 'identity.json'), 'utf8'));
+    await a.run(['key', 'add-recipient', identity.publicKey]);
+    expect(await b.run(['unlock'])).toBe(0);
+
+    expect(await b.run(['key', 'add-provider', 'passphrase-file'], { env: {} })).toBe(2);
+  });
+
   it('add-provider yubikey-piv requires --slot, before ever touching hardware', async () => {
     const h = harness();
     await h.run(['init']);
     await h.run(['unlock']);
     expect(await h.run(['key', 'add-provider', 'yubikey-piv'])).toBe(4);
     expect(h.stderrText()).toContain('--slot');
+  });
+
+  it('add-provider yubikey-piv loads the real companion package, then fails past --slot with no hardware attached', async () => {
+    // Proves the `type === 'yubikey-piv'` branch really reaches
+    // loadProvider() (a genuine dynamic import of the real, installed
+    // @trinoris/securelib-piv workspace package — it succeeds, since the
+    // package is present) and then addProvider()'s own wrap() call, which
+    // fails fast and safely: `ykman piv keys export` finds no card
+    // attached in this environment and exits nonzero immediately, no PIN
+    // ever requested.
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    expect(await h.run(['key', 'add-provider', 'yubikey-piv', '--slot', '9d'])).toBe(4);
+  });
+
+  it('add-provider yubikey-fido2 loads the real companion package, then fails with no authenticator attached', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    expect(await h.run(['key', 'add-provider', 'yubikey-fido2'])).toBe(4);
   });
 
   /**
@@ -1471,6 +1928,27 @@ describe('merge', () => {
     await h.run(['clean', '--', PATH], { stdin: Buffer.from(plaintext) });
     await writeFile(filePath, h.stdoutBuf());
   }
+
+  it('exits misconfigured before init', async () => {
+    const h = harness();
+    const baseFile = join(dir, 'O');
+    const oursFile = join(dir, 'A');
+    const theirsFile = join(dir, 'B');
+    await writeFile(baseFile, 'x');
+    await writeFile(oursFile, 'x');
+    await writeFile(theirsFile, 'x');
+    expect(await h.run(['merge', '--', baseFile, oursFile, theirsFile, '7', PATH])).toBe(2);
+  });
+
+  it('with too few positional arguments after -- exits usage', async () => {
+    const h = harness();
+    expect(await h.run(['merge', '--', 'only-one-arg'])).toBe(4);
+  });
+
+  it('with a non-numeric markerSize exits usage', async () => {
+    const h = harness();
+    expect(await h.run(['merge', '--', 'O', 'A', 'B', 'not-a-number', PATH])).toBe(4);
+  });
 
   it('resolves a clean merge, writes ciphertext to %A, and exits 0', async () => {
     const h = harness();
@@ -1927,6 +2405,26 @@ describe('key rotate / reencrypt', () => {
       expect(await h.run(['key', 'rotate'], { env: {} })).toBe(1);
     });
 
+    it('exits usage when git itself cannot be spawned for the dirty-check', async () => {
+      const h = await setUp();
+      // No `PATH` in the call's own `env`, so the dirty-check falls back to
+      // `process.env.PATH` (see the comment above that fallback in
+      // cli.ts) — clearing it there is what actually makes `execFile('git',
+      // ...)` fail with ENOENT instead of finding the real binary.
+      const realPath = process.env.PATH;
+      process.env.PATH = '';
+      try {
+        expect(
+          await h.run(['key', 'rotate', '--confirm-recipients', '0'], {
+            env: { SECUREGIT_PASSPHRASE: 'correct horse battery staple' },
+          }),
+        ).toBe(4);
+        expect(h.stderrText()).toContain('could not check git status');
+      } finally {
+        process.env.PATH = realPath;
+      }
+    });
+
     it('adds a generation, keeps the old one, and invalidates the session', async () => {
       const h = await setUp();
       // `key rotate` itself needs SECUREGIT_PASSPHRASE (or stdin) for its
@@ -2077,6 +2575,23 @@ describe('key rotate / reencrypt', () => {
   });
 
   describe('reencrypt', () => {
+    it('exits misconfigured before init', async () => {
+      const h = harness();
+      expect(await h.run(['reencrypt'])).toBe(2);
+    });
+
+    it('exits locked before unlock', async () => {
+      const h = harness();
+      await h.run(['init']);
+      expect(await h.run(['reencrypt'], { env: {} })).toBe(1);
+    });
+
+    it('--paths filters out a tracked file whose path does not match the prefix', async () => {
+      const h = await setUp();
+      expect(await h.run(['reencrypt', '--paths', 'nonexistent/prefix'], { env: {} })).toBe(0);
+      expect(h.stderrText()).toContain('0 protected file');
+    });
+
     it('--dry-run stages nothing', async () => {
       const h = await setUp();
       expect(await h.run(['key', 'rotate', '--confirm-recipients', '0'])).toBe(0);
@@ -2429,11 +2944,85 @@ describe('runFilterProcess()', () => {
     await h.end();
     await result;
   });
+
+  it('drains further chunks without processing them once aborted by a protocol violation', async () => {
+    const initHarness = harness();
+    await initHarness.run(['init']);
+    await initHarness.run(['unlock']);
+
+    const h = filterProcessHarness();
+    const result = h.start();
+    await h.push(encodePacketList([Buffer.from('not-a-handshake\n')]));
+    expect(await result).toBe(4);
+    h.reset();
+
+    // Once aborted, a further chunk is still drained off the chain (so
+    // push() keeps resolving instead of hanging) but the server — already
+    // in a corrupted state after the failed handshake — never sees it.
+    await h.push(capabilitiesRequest());
+    expect(h.outBuf().length).toBe(0);
+  });
+
+  it('threads an injected clock through both the session-key and session-file key sources', async () => {
+    const initHarness = harness();
+    await initHarness.run(['init']);
+    await initHarness.run(['unlock']);
+    const config = JSON.parse(
+      await readFile(join(dir, '.securegit', 'config.json'), 'utf8'),
+    ) as { repoId: string };
+    const sessionKey = (await readFile(resolveSessionPath(config.repoId, {}, home))).toString('base64');
+
+    const farFuture = (): Date => new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+
+    // Via SECUREGIT_SESSION_KEY: keySourceFromSessionKey() gets the clock,
+    // sees the (real, unexpired) session as already past its expiresAt, and
+    // reports locked rather than throwing.
+    const viaSessionKey = filterProcessHarness({
+      env: { SECUREGIT_SESSION_KEY: sessionKey },
+      now: farFuture,
+    });
+    const r1 = viaSessionKey.start();
+    await viaSessionKey.push(handshakeRequest());
+    await viaSessionKey.push(capabilitiesRequest());
+    viaSessionKey.reset();
+    await viaSessionKey.push(commandRequest('clean', PATH, PT));
+    expect(textOf(readAllLists(viaSessionKey.outBuf())[0]!)).toEqual(['status=error']);
+    await viaSessionKey.end();
+    expect(await r1).toBe(0);
+
+    // With no session-key/passphrase env at all, the same clock reaches
+    // readSession()'s own fallback path and forces the identical outcome.
+    const viaSessionFile = filterProcessHarness({ now: farFuture });
+    const r2 = viaSessionFile.start();
+    await viaSessionFile.push(handshakeRequest());
+    await viaSessionFile.push(capabilitiesRequest());
+    viaSessionFile.reset();
+    await viaSessionFile.push(commandRequest('clean', PATH, PT));
+    expect(textOf(readAllLists(viaSessionFile.outBuf())[0]!)).toEqual(['status=error']);
+    await viaSessionFile.end();
+    expect(await r2).toBe(0);
+  });
 });
 
 describe('textconv', () => {
   const PT = Buffer.from('{"timeout":30}\n');
   const PATH = 'config/production.json';
+
+  it('exits misconfigured before init', async () => {
+    const h = harness();
+    expect(await h.run(['textconv', '--', PATH], { stdin: PT })).toBe(2);
+  });
+
+  it('with -- but no path after it exits usage', async () => {
+    const h = harness();
+    expect(await h.run(['textconv', '--'])).toBe(4);
+  });
+
+  it('with no -- separator or path exits usage', async () => {
+    const h = harness();
+    expect(await h.run(['textconv'])).toBe(4);
+    expect(h.stderrText()).toContain('usage: securegit textconv');
+  });
 
   it('decrypts a file for display, to stdout', async () => {
     const h = harness();
@@ -2470,6 +3059,29 @@ describe('encrypt / decrypt / inspect', () => {
   const PT = Buffer.from('hello from the ad-hoc path\n');
   const PATH = 'config/production.json';
 
+  it('encrypt with no input argument exits usage', async () => {
+    const h = harness();
+    expect(await h.run(['encrypt'])).toBe(4);
+    expect(h.stderrText()).toContain('usage: securegit encrypt');
+  });
+
+  it('decrypt with no input argument exits usage', async () => {
+    const h = harness();
+    expect(await h.run(['decrypt'])).toBe(4);
+    expect(h.stderrText()).toContain('usage: securegit decrypt');
+  });
+
+  it('inspect with no input argument exits usage', async () => {
+    const h = harness();
+    expect(await h.run(['inspect'])).toBe(4);
+    expect(h.stderrText()).toContain('usage: securegit inspect');
+  });
+
+  it('inspect on malformed (non-envelope) input exits crypto failure', async () => {
+    const h = harness();
+    expect(await h.run(['inspect', '-'], { stdin: Buffer.from('not an envelope at all') })).toBe(3);
+  });
+
   it('encrypt then decrypt round-trips via stdin/stdout', async () => {
     const h = harness();
     await h.run(['init']);
@@ -2482,6 +3094,14 @@ describe('encrypt / decrypt / inspect', () => {
     await h2.run(['unlock']);
     expect(await h2.run(['decrypt', '-'], { stdin: ciphertext })).toBe(0);
     expect(h2.stdoutBuf().equals(PT)).toBe(true);
+  });
+
+  it('a trailing --out with no value falls back to stdout, same as omitting it', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+    expect(await h.run(['encrypt', '-', '--out'], { stdin: PT })).toBe(0);
+    expect(looksLikeEnvelope(h.stdoutBuf())).toBe(true);
   });
 
   it('encrypt exits 1 while locked', async () => {
@@ -2506,6 +3126,24 @@ describe('encrypt / decrypt / inspect', () => {
     const viaClean = h.stdoutBuf();
 
     expect(viaEncrypt.equals(viaClean)).toBe(true);
+  });
+
+  it('encrypt --out <file> then decrypt <file> round-trips through real files, not just stdin/stdout', async () => {
+    const h = harness();
+    await h.run(['init']);
+    await h.run(['unlock']);
+
+    const plainPath = join(dir, 'plain.json');
+    const cipherPath = join(dir, 'cipher.bin');
+    await writeFile(plainPath, PT);
+
+    expect(await h.run(['encrypt', plainPath, '--out', cipherPath])).toBe(0);
+    const ciphertext = await readFile(cipherPath);
+    expect(looksLikeEnvelope(ciphertext)).toBe(true);
+
+    const outPath = join(dir, 'roundtrip.json');
+    expect(await h.run(['decrypt', cipherPath, '--out', outPath])).toBe(0);
+    expect((await readFile(outPath)).equals(PT)).toBe(true);
   });
 
   it('decrypt produces the same bytes as smudge, byte for byte', async () => {
@@ -2705,6 +3343,39 @@ describe('--quiet', () => {
 });
 
 describe('help', () => {
+  it('`--help` short-circuits every command in the switch, before it ever runs', async () => {
+    // One test per case in runCli's switch — each `if (wantsHelp(rest))
+    // return showHelp(...)` is its own branch, only exercised by actually
+    // asking that specific command for help, not inherited from testing
+    // any other command's.
+    const commands = [
+      'init',
+      'install',
+      'unprotect',
+      'unlock',
+      'lock',
+      'status',
+      'reencrypt',
+      'verify',
+      'clean',
+      'smudge',
+      'textconv',
+      'merge',
+      'encrypt',
+      'decrypt',
+      'inspect',
+    ];
+    for (const cmd of commands) {
+      const h = harness();
+      expect(await h.run([cmd, '--help'])).toBe(0);
+      expect(h.stderrText()).toContain(`usage: securegit ${cmd}`);
+      // Never touched the repository: no config.json means the command's
+      // real logic never ran (every one of these would otherwise exit
+      // misconfigured/usage against a fresh, uninitialised `dir`).
+      await expect(readFile(join(dir, '.securegit', 'config.json'), 'utf8')).rejects.toThrow();
+    }
+  });
+
   it('`--help` / `-h` / bare `help` all print the full command list', async () => {
     const h = harness();
     for (const argv of [['--help'], ['-h'], ['help']]) {
@@ -2767,6 +3438,20 @@ describe('help', () => {
     const fromHelpWord = h.stderrText();
     expect(fromFlag).toContain('usage: securegit key rotate');
     expect(fromFlag).toBe(fromHelpWord);
+  });
+
+  it('bare `securegit help <command>` for a plain (non-group) command prints that command\'s own help', async () => {
+    const h = harness();
+    await h.run(['help', 'protect']);
+    expect(h.stderrText()).toContain('usage: securegit protect');
+  });
+
+  it('bare `securegit help identity` and `securegit help agent` (not just `help key`) print their own subcommand overview', async () => {
+    const h = harness();
+    await h.run(['help', 'identity']);
+    expect(h.stderrText()).toContain('usage: securegit identity');
+    await h.run(['help', 'agent']);
+    expect(h.stderrText()).toContain('usage: securegit agent');
   });
 
   it('`securegit key --help` and `securegit identity --help` print a subcommand overview', async () => {
@@ -2855,9 +3540,27 @@ describe('agent install / agent list', () => {
     expect(await h.run(['agent', 'install', 'bogus'])).toBe(4);
   });
 
+  it('a genuine fs failure (not an AgentInstallError) reaches runCli()\'s outer catch-all, not cmdAgentInstall\'s own', async () => {
+    // `kiro` writes to a nested path (.kiro/steering/securegit.md) — a
+    // plain file occupying `.kiro` itself makes the recursive `mkdir` fail
+    // with ENOTDIR, a real filesystem error `installAgentTargets()` never
+    // wraps as its own `AgentInstallError` — so `cmdAgentInstall` re-throws
+    // it (rather than swallowing it into some exit code of its own), and
+    // it's `runCli()`'s own top-level catch that turns it into exit 4.
+    const h = harness();
+    await writeFile(join(dir, '.kiro'), 'not a directory\n');
+    expect(await h.run(['agent', 'install', 'kiro'])).toBe(4);
+    expect(h.stderrText()).toContain('securegit: unexpected error');
+  });
+
   it('an unknown agent subcommand exits usage (4)', async () => {
     const h = harness();
     expect(await h.run(['agent', 'bogus'])).toBe(4);
+  });
+
+  it('`agent list` with an unknown target exits usage (4)', async () => {
+    const h = harness();
+    expect(await h.run(['agent', 'list', 'bogus'])).toBe(4);
   });
 
   it('`agent list` prints paths and writes nothing', async () => {

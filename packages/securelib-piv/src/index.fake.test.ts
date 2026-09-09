@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { writeFile, stat } from 'node:fs/promises';
-import { RealPivCard, type Runner } from './index.js';
+import { RealPivCard, createProvider, type Runner } from './index.js';
 
 /**
  * Covers RealPivCard's own logic (slot mapping, argv construction, SPKI
@@ -137,5 +137,28 @@ describe('RealPivCard.ecdh()', () => {
 
     await card.ecdh('9d', rawPoint, '123456');
     await expect(stat(capturedDir)).rejects.toThrow();
+  });
+});
+
+describe('createProvider()', () => {
+  // registry.ts's loadProvider() entry point (06-key-provider-port.md,
+  // "Loading a provider package without paying for it") — the contract is
+  // "construct a usable KeyProvider from a plain config object," which
+  // needs no I/O and no real hardware to verify.
+
+  it('builds a KeyProvider with the default id "yubikey-piv"', () => {
+    const provider = createProvider({ slot: '9d', pin: () => '123456' });
+    expect(provider.id).toBe('yubikey-piv');
+    expect(provider.describe().id).toBe('yubikey-piv');
+  });
+
+  it('accepts a config with no pkcs11Module', () => {
+    expect(() => createProvider({ slot: '9d', pin: () => '123456' })).not.toThrow();
+  });
+
+  it('accepts a config with an explicit pkcs11Module', () => {
+    expect(() =>
+      createProvider({ slot: '9d', pin: () => '123456', pkcs11Module: '/usr/lib/opensc-pkcs11.so' }),
+    ).not.toThrow();
   });
 });

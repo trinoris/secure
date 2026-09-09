@@ -15,26 +15,135 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  build:
-
+  # Independent of the build tree below — `npm audit` inspects the one
+  # shared package-lock.json directly, no package needs to be built first.
+  # This is the actual gate (fails the job on any high/critical finding
+  # across the whole workspace); `metrics-badges` below runs it again
+  # per-package, but only to report a number, never to block anything.
+  audit:
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        node-version: [22.x]
-        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
-
     steps:
-    - uses: actions/checkout@v7
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v7
-      with:
-        node-version: ${{ matrix.node-version }}
-        cache: 'npm'
-    - run: npm ci
-    - run: npm audit --audit-level=high
-    - run: npm run build --if-present
-    - run: npm test
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: 'npm'
+      - run: npm ci
+      - run: npm audit --audit-level=high
+
+  # The build/test tree mirrors this repo's real package dependency graph
+  # (packages/securelib-piv and packages/securelib-fido2 both peerDepend
+  # on @trinoris/securelib; packages/securegit depends on it) rather than
+  # one job doing all four sequentially: securelib builds and tests first
+  # since the other three need its build output (dist/) to even type-check
+  # against, then the three leaves build/test in parallel once it's green.
+  # Each downstream job re-runs `build:securelib` itself rather than
+  # sharing dist/ via an artifact — a plain `tsc` compile is a few seconds,
+  # cheaper than wiring artifact upload/download for it, and every job
+  # stays runnable standalone (e.g. via `workflow_dispatch` re-runs of just
+  # one job) without depending on another job's artifact still existing.
+  build-securelib:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build:securelib
+      - run: npm run typecheck --workspace=packages/securelib
+      # `test:coverage` runs the exact same tests `test` would, plus v8
+      # coverage instrumentation — this package's own vitest.config.ts sets
+      # `coverage.thresholds.branches: 90`, so vitest itself exits nonzero
+      # (failing this step) the moment its real branch coverage drops
+      # below that bar. That failure *is* the coverage gate for this
+      # package; there's no separate check to add beyond running this
+      # instead of the uninstrumented `test`.
+      - run: npm run test:coverage --workspace=packages/securelib
+
+  build-securelib-piv:
+    needs: build-securelib
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build:securelib
+      - run: npm run build:securelib-piv
+      - run: npm run typecheck --workspace=packages/securelib-piv
+      - run: npm run test:coverage --workspace=packages/securelib-piv
+
+  build-securelib-fido2:
+    needs: build-securelib
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build:securelib
+      - run: npm run build:securelib-fido2
+      - run: npm run typecheck --workspace=packages/securelib-fido2
+      - run: npm run test:coverage --workspace=packages/securelib-fido2
+
+  build-securegit:
+    needs: build-securelib
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build:securelib
+      - run: npm run build --workspace=packages/securegit
+      - run: npm run typecheck --workspace=packages/securegit
+      - run: npm run test:coverage --workspace=packages/securegit
+
+  # Generates the README's coverage and audit badge data (shields.io
+  # "endpoint badge" JSON files — https://shields.io/badges/endpoint-badge)
+  # and hands them to `chaos-publish` below to include in the Pages site
+  # it deploys. Deliberately on the same nightly/manual cadence as
+  # `chaos`, not on every push/PR: this repo's one GitHub Pages site is
+  # already fully replaced by `chaos-publish` every time it deploys (see
+  # that job's own comments on why it always assembles a complete site
+  # from scratch each run), so a push-triggered badge deploy would just
+  # make the chaos dashboard disappear until the next nightly run
+  # re-published it. The coverage and audit *gates* (the build-tree jobs'
+  # own test:coverage steps, and `audit` above) already run on every
+  # push/PR regardless — this job only affects how often the README's
+  # displayed numbers refresh, so it re-runs its own full build+test+audit
+  # rather than pulling artifacts out of the (unrelated-cadence) gate jobs.
+  metrics-badges:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:coverage
+      - run: mkdir -p badges
+      # One coverage badge per package (coverage-badge-<pkg>.json) plus
+      # one aggregate (coverage-badge.json) — see generate-coverage-badge.mjs.
+      - run: npm run coverage:badge -- badges
+      # One audit badge per package (audit-badge-<pkg>.json) — see
+      # generate-audit-badge.mjs. Reporting only (see that script's own
+      # header comment for why `audit` above, not this, is the real gate).
+      - run: npm run audit:badge -- badges
+      - uses: actions/upload-artifact@v7
+        with:
+          name: metrics-badges-${{ github.run_id }}
+          path: badges/
 
   # Runs the Docker Compose chaos sandbox (chaos/docker-compose.yml, see
   # specs/chaotests/01-sandbox.md) once per combination of two independent
@@ -197,7 +306,7 @@ jobs:
   # invariant check above is the expected, interesting result this whole
   # comparison exists to surface, never a reason to skip publishing it.
   chaos-publish:
-    needs: chaos
+    needs: [chaos, metrics-badges]
     # `chaos` itself only runs on schedule/workflow_dispatch (see its own
     # `if:` above) — every ordinary push/PR run has `chaos.result ==
     # 'skipped'`, and `always()` alone doesn't exclude that. Confirmed by
@@ -205,6 +314,12 @@ jobs:
     # this, chaos-publish ran anyway with zero downloaded artifacts,
     # assembled a site with three empty mode subfolders, and deploy-pages
     # published *that*, silently wiping out the last real comparison.
+    #
+    # Deliberately keyed on `chaos` alone, not `metrics-badges` — the
+    # chaos dashboard is this job's primary content and must still publish
+    # even if the badge step failed; the badge copy below is best-effort
+    # (falls back to leaving the badges out of this deploy, not to failing
+    # the whole site).
     if: always() && needs.chaos.result != 'skipped' && needs.chaos.result != 'cancelled'
     runs-on: ubuntu-latest
     permissions:
@@ -220,10 +335,22 @@ jobs:
           pattern: chaos-result-*-${{ github.run_id }}
           path: downloaded
 
+      - name: Download the coverage/audit badges
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: metrics-badges-${{ github.run_id }}
+          path: downloaded-badges
+
       - name: Assemble the comparison site
         run: |
           mkdir -p site
           cp chaos/viewer/index.html site/index.html
+          if compgen -G "downloaded-badges/*.json" > /dev/null; then
+            cp downloaded-badges/*.json site/
+          else
+            echo "::warning::no badge*.json files were downloaded — the metrics-badges job likely failed; the README's coverage/audit badges will 404 until the next successful run republishes them."
+          fi
           for workflow in direct-master working-branch pr-gated; do
             for signing in basic advance; do
               mode="$workflow-$signing"

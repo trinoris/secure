@@ -139,6 +139,25 @@ describe('wrap() / unwrap() round-trip', () => {
     await expect(wrong.unwrap(wrapped, ctx)).rejects.toBeInstanceOf(ProviderError);
   });
 
+  it('unwrap() throws ProviderError when the wrapped payload is missing a required field', async () => {
+    const provider = providerWith('correct horse battery staple');
+    const ctx = await ctxFor(provider, 'repo-a', 1);
+    const wrapped = await provider.wrap(RMK, ctx);
+    const { ciphertext: _ciphertext, ...withoutCiphertext } = wrapped.payload;
+    await expect(
+      provider.unwrap({ provider: wrapped.provider, payload: withoutCiphertext }, ctx),
+    ).rejects.toThrow(/missing a required field/);
+  });
+
+  it('unwrap() throws ProviderError when ctx.state is missing scrypt parameters', async () => {
+    const provider = providerWith('correct horse battery staple');
+    const ctx = await ctxFor(provider, 'repo-a', 1);
+    const wrapped = await provider.wrap(RMK, ctx);
+    await expect(provider.unwrap(wrapped, { ...ctx, state: { salt: 'abc' } })).rejects.toThrow(
+      /missing scrypt parameters/,
+    );
+  });
+
   it('unwrap fails when repoId does not match what was wrapped', async () => {
     const provider = providerWith('correct horse battery staple');
     const ctx = await ctxFor(provider, 'repo-a', 1);

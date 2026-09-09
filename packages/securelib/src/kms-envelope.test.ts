@@ -87,6 +87,12 @@ describe('KmsEnvelopeProvider', () => {
     ).rejects.toBeInstanceOf(ProviderError);
   });
 
+  it('wrap() throws ProviderError when ctx.state is missing keyId or backend (requireState)', async () => {
+    const provider = new KmsEnvelopeProvider(new FakeKmsBackend(), 'aws', 'key-1');
+    await expect(provider.wrap(randomBytes(32), ctx({ keyId: 'key-1' }))).rejects.toBeInstanceOf(ProviderError);
+    await expect(provider.wrap(randomBytes(32), ctx({ backend: 'aws' }))).rejects.toBeInstanceOf(ProviderError);
+  });
+
   it('two providers pointed at different key ids never cross-decrypt each other\'s wrapped output', async () => {
     const backend = new FakeKmsBackend();
     const providerA = new KmsEnvelopeProvider(backend, 'aws', 'key-a');

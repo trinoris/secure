@@ -467,14 +467,18 @@ export async function findLikelyWindowsHome(
   return matches.length === 1 ? matches[0]! : null;
 }
 
-export async function readKeyringFile(path: string): Promise<KeyringFile> {
+export async function readKeyringFile(
+  path: string,
+  /** Test-only override — real callers always get the real search. */
+  findWindowsHomeOptions?: FindLikelyWindowsHomeOptions,
+): Promise<KeyringFile> {
   let raw: string;
   try {
     raw = await readFile(path, 'utf8');
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
       const repoId = basename(dirname(path));
-      const candidate = await findLikelyWindowsHome(repoId).catch(() => null);
+      const candidate = await findLikelyWindowsHome(repoId, findWindowsHomeOptions).catch(() => null);
       throw new KeyringError(
         `securegit: no keyring found at ${path}\n` +
           `  action: set SECUREGIT_HOME if this repository's key lives under a different home\n` +

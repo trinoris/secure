@@ -71,4 +71,19 @@ describe('YubikeyFido2Provider', () => {
     const differentPhysicalKey = new YubikeyFido2Provider(new FakeFido2Authenticator());
     await expect(differentPhysicalKey.unwrap(wrapped, ctx(state))).rejects.toBeInstanceOf(ProviderError);
   });
+
+  it('unwrap() throws ProviderError when the wrapped payload is missing a required field', async () => {
+    const provider = new YubikeyFido2Provider(new FakeFido2Authenticator());
+    const state = await provider.init({ repoId: 'repo-a', generation: 1 });
+    const wrapped = await provider.wrap(randomBytes(32), ctx(state));
+    const { ciphertext: _ciphertext, ...withoutCiphertext } = wrapped.payload;
+    await expect(
+      provider.unwrap({ provider: wrapped.provider, payload: withoutCiphertext }, ctx(state)),
+    ).rejects.toThrow(/missing a required field/);
+  });
+
+  it('wrap() throws ProviderError when ctx.state is missing credentialId/salt (requireState)', async () => {
+    const provider = new YubikeyFido2Provider(new FakeFido2Authenticator());
+    await expect(provider.wrap(randomBytes(32), ctx({}))).rejects.toThrow(/missing credentialId\/salt/);
+  });
 });

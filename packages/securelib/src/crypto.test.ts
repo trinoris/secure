@@ -413,3 +413,14 @@ describe('round-trip stability across line endings', () => {
     expect(contentTag(K, lf, null).equals(contentTag(K, crlf, null))).toBe(false);
   });
 });
+
+describe('input validation (requireBytes)', () => {
+  it('rejects a key of the wrong length, distinctly from "not a Buffer" (deriveTagKey)', () => {
+    expect(() => deriveTagKey(Buffer.alloc(31))).toThrow(/must be 32 bytes, got 31/);
+    expect(() => deriveTagKey(Buffer.alloc(33))).toThrow(/must be 32 bytes, got 33/);
+  });
+
+  it('rejects a non-Buffer value (deriveTagKey)', () => {
+    expect(() => deriveTagKey('not a buffer' as unknown as Buffer)).toThrow(/must be a Buffer/);
+  });
+});
