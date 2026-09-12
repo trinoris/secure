@@ -258,8 +258,12 @@ export const HELP: Record<string, HelpEntry> = {
       "it — the escape hatch `unprotect` can't be once protection comes from a blanket pattern like",
       '`**` rather than a short discrete list. Idempotent; already-committed blobs are unaffected',
       'until the file is next edited and re-added (or `reencrypt` is run).',
+      '',
+      "A bare filename like `README.md` matches at every depth (Git's own pattern rule, same as",
+      '.gitignore) — it excludes docs/README.md and specs/README.md too, not just the one at the',
+      'repository root. Anchor with a leading slash (`/README.md`) to mean the root file only.',
     ],
-    examples: ['securegit exclude README.md', "securegit exclude '.github/workflows/**'"],
+    examples: ['securegit exclude /README.md', "securegit exclude '.github/workflows/**'"],
   },
   status: {
     usage: 'securegit status [--json]',

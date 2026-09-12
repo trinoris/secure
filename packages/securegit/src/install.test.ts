@@ -468,6 +468,24 @@ describe('excludePattern()', () => {
   it('DEFAULT_PROTECT_EXCLUSIONS names .github/workflows/**', () => {
     expect(DEFAULT_PROTECT_EXCLUSIONS).toEqual(['.github/workflows/**']);
   });
+
+  it('a bare filename pattern matches at every depth, not just the root — a real gotcha, not a bug', async () => {
+    await protect(dir, ['**']);
+    await excludePattern(dir, ['README.md']);
+    const root = await git(dir, ['check-attr', 'filter', '--', 'README.md']);
+    const nested = await git(dir, ['check-attr', 'filter', '--', 'docs/README.md']);
+    expect(root).toContain('filter: unset');
+    expect(nested).toContain('filter: unset'); // matches too — same rule as .gitignore
+  });
+
+  it('a leading slash anchors the exclusion to the repository root only', async () => {
+    await protect(dir, ['**']);
+    await excludePattern(dir, ['/README.md']);
+    const root = await git(dir, ['check-attr', 'filter', '--', 'README.md']);
+    const nested = await git(dir, ['check-attr', 'filter', '--', 'docs/README.md']);
+    expect(root).toContain('filter: unset');
+    expect(nested).toContain('filter: securegit'); // stays protected
+  });
 });
 
 describe('swapPattern()', () => {

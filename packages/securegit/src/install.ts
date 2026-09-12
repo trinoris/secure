@@ -316,6 +316,13 @@ export async function unprotect(repoDir: string, patterns: string[]): Promise<vo
  * Like `protect`, does not touch anything already committed: a file that was
  * ciphertext before stays ciphertext until it's next edited and re-added (or
  * `reencrypt` is run).
+ *
+ * Patterns are plain Git attribute patterns, not necessarily what a caller
+ * expects: a bare `README.md` matches that basename at every depth (same
+ * rule as `.gitignore`), so it would also exclude `docs/README.md` and
+ * `specs/README.md`, not just the one at the repository root — confirmed
+ * against real `git check-attr` while dogfooding this exact command, not
+ * assumed. Anchor with a leading slash (`/README.md`) for a root-only match.
  */
 export async function excludePattern(repoDir: string, patterns: string[]): Promise<void> {
   if (patterns.length === 0) {

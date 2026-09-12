@@ -41,8 +41,10 @@ securegit protect config/production.json '*.pem'
   nobody named it in advance — automatically excluding
   `.github/workflows/**` (GitHub Actions can't parse an encrypted workflow
   file). Use `securegit exclude <pattern>…` for any other deliberate
-  plaintext exception, e.g. a README you want GitHub's own preview to
-  keep rendering.
+  plaintext exception, e.g. `securegit exclude /README.md` for a README
+  you want GitHub's own preview to keep rendering — the leading slash
+  matters: a bare `README.md` matches at every depth, same rule as
+  `.gitignore`, and would also exclude `docs/README.md`.
 
 From here on, nothing about your day-to-day Git workflow changes:
 
