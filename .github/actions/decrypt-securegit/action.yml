@@ -1,0 +1,38 @@
+name: Decrypt securegit-protected source
+description: >
+  This repository dogfoods its own tool: everything outside the
+  plaintext-excluded paths in .gitattributes (workflows, this action,
+  docs/, README.md, LICENSE, package manifests, secret-pass-phrase.txt)
+  is real securegit ciphertext at rest. The decrypt key isn't a CI
+  secret here — see secret-pass-phrase.txt for why it's published in
+  the clear: this is the open-source tool itself, so hiding its own
+  source from CI (or from anyone auditing it) would defeat the point.
+  Bootstraps via the last published @trinoris/securegit release (this
+  repo's own CI can't decrypt its own in-progress source with a securegit
+  built FROM that same still-encrypted source — same reasoning
+  trinoris-safezone's CI uses a dedicated machine identity's own
+  already-published CLI, just with a public passphrase file here
+  instead of a private machine identity).
+runs:
+  using: composite
+  steps:
+    - name: Install securegit CLI from GitHub Packages
+      shell: bash
+      env:
+        NODE_AUTH_TOKEN: ${{ github.token }}
+      run: |
+        echo "@trinoris:registry=https://npm.pkg.github.com" >> ~/.npmrc
+        echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> ~/.npmrc
+        npm install -g @trinoris/securegit@0.1.0
+    - name: Unlock with the repo's own published demo passphrase
+      shell: bash
+      run: |
+        securegit install
+        SECUREGIT_PASSPHRASE="$(cat secret-pass-phrase.txt)" securegit unlock
+        # Git's own stat-cache assumes an already-checked-out ciphertext
+        # file "matches the index" and skips re-running smudge even after
+        # unlock — emptying the index first removes that shortcut so the
+        # checkout that follows actually re-materializes every file
+        # through the now-unlocked filter (docs/securegit/02-faq.md).
+        git rm --cached -r -q .
+        git checkout HEAD -- .

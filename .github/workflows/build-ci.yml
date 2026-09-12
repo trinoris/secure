@@ -44,12 +44,15 @@ jobs:
   # one job) without depending on another job's artifact still existing.
   build-securelib:
     runs-on: ubuntu-latest
+    permissions:
+      packages: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22.x
           cache: 'npm'
+      - uses: ./.github/actions/decrypt-securegit
       - run: npm ci
       - run: npm run build:securelib
       # securelib's own registry.test.ts genuinely dynamic-imports the
@@ -74,12 +77,15 @@ jobs:
   build-securelib-piv:
     needs: build-securelib
     runs-on: ubuntu-latest
+    permissions:
+      packages: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22.x
           cache: 'npm'
+      - uses: ./.github/actions/decrypt-securegit
       - run: npm ci
       - run: npm run build:securelib
       - run: npm run build:securelib-piv
@@ -89,12 +95,15 @@ jobs:
   build-securelib-fido2:
     needs: build-securelib
     runs-on: ubuntu-latest
+    permissions:
+      packages: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22.x
           cache: 'npm'
+      - uses: ./.github/actions/decrypt-securegit
       - run: npm ci
       - run: npm run build:securelib
       - run: npm run build:securelib-fido2
@@ -104,12 +113,15 @@ jobs:
   build-securegit:
     needs: build-securelib
     runs-on: ubuntu-latest
+    permissions:
+      packages: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22.x
           cache: 'npm'
+      - uses: ./.github/actions/decrypt-securegit
       - run: npm ci
       - run: npm run build:securelib
       # securegit's own cli.test.ts genuinely dynamic-imports the real,
@@ -145,12 +157,15 @@ jobs:
   metrics-badges:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      packages: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22.x
           cache: 'npm'
+      - uses: ./.github/actions/decrypt-securegit
       - run: npm ci
       - run: npm run test:coverage
       - run: mkdir -p badges
@@ -191,6 +206,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
@@ -204,6 +220,14 @@ jobs:
       SANDBOX_SIGNING: ${{ matrix.signing }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+      # chaos/** (docker-compose.yml, Dockerfile, every actor/agent script)
+      # is real securegit ciphertext at rest like the rest of this repo —
+      # `docker compose up --build` needs it decrypted first, or it fails
+      # to even parse docker-compose.yml.
+      - uses: ./.github/actions/decrypt-securegit
 
       - name: Run the chaos sandbox (${{ matrix.workflow }}, ${{ matrix.signing }})
         run: |
@@ -345,10 +369,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: read
       pages: write
       id-token: write
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+      # chaos/viewer/index.html (copied below) is real securegit
+      # ciphertext at rest, same as the rest of this repo.
+      - uses: ./.github/actions/decrypt-securegit
 
       - name: Download every workflow's results
         uses: actions/download-artifact@v8

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "repoId": "8c33375a5da4bf247f2b866463efa5c5",
+  "format": 1,
+  "generations": {
+    "1": {
+      "nonce": "1ca981f0c41be38071214b4d",
+      "ciphertext": "97ce71cd4dac2c746e197080ef96721e5e809d8f4144eb592e4891a3bb596d30",
+      "authTag": "1d5da788742bc453e96636f896e77352"
+    }
+  }
+}

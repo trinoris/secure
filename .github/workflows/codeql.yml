@@ -17,6 +17,7 @@ jobs:
     permissions:
       security-events: write
       contents: read
+      packages: read
 
     steps:
       - uses: actions/checkout@v7
@@ -25,6 +26,13 @@ jobs:
         with:
           node-version: '22.x'
           cache: 'npm'
+
+      # This repo is real securegit ciphertext at rest outside the
+      # plaintext-excluded paths (.gitattributes) — CodeQL needs the real
+      # decrypted source to analyze, not opaque encrypted bytes. See
+      # secret-pass-phrase.txt for why the decrypt key is published
+      # openly rather than a CI secret.
+      - uses: ./.github/actions/decrypt-securegit
 
       - run: npm ci
 

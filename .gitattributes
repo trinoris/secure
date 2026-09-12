@@ -1,0 +1,15 @@
+** filter=securegit diff=securegit merge=securegit -text
+.github/workflows/** -filter -diff -text
+/README.md -filter -diff -text
+docs/** -filter -diff -text
+/secret-pass-phrase.txt -filter -diff -text
+/LICENSE -filter -diff -text
+.github/dependabot.yml -filter -diff -text
+/package.json -filter -diff -text
+/package-lock.json -filter -diff -text
+packages/*/package.json -filter -diff -text
+.github/actions/** -filter -diff -text
+*.recovery.txt -filter -diff -text
+/recovery-code.txt -filter -diff -text
+.gitattributes -filter -diff -text
+.securegit/** -filter -diff -text

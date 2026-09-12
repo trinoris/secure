@@ -51,6 +51,13 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
           scope: '@trinoris'
 
+      # This repo is real securegit ciphertext at rest outside the
+      # plaintext-excluded paths (.gitattributes) — the build/test/publish
+      # steps below need the real decrypted source. See
+      # secret-pass-phrase.txt for why the decrypt key is published
+      # openly rather than a CI secret.
+      - uses: ./.github/actions/decrypt-securegit
+
       - run: npm ci
       - run: npm audit --audit-level=high
       - run: npm run build

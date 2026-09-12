@@ -45,6 +45,37 @@ git add . && git commit -m "hello" && git push
 `git add`, `git status`, `git diff`, `git log -p` all behave normally — the
 filter is invisible until you go looking for it.
 
+## This repository dogfoods itself
+
+Outside `docs/`, `README.md`, `LICENSE`, `.github/workflows/`,
+`.github/actions/`, and the package manifests (`package.json`,
+`package-lock.json` — kept plaintext so Dependabot and a plain `npm ci`
+still work), every file in this repo is real securegit ciphertext at
+rest — the same clean/smudge filter, the same AEAD envelope, this tool
+produces for anyone else's repo. `git log -p` on a source file shows
+exactly the ciphertext diagram above.
+
+The decrypt passphrase is published in [`secret-pass-phrase.txt`](secret-pass-phrase.txt),
+in the clear, on purpose: this is the open-source tool itself, so hiding
+its own source from the security researchers and users it asks to trust
+would defeat the point of being open source. Publishing the key proves
+the mechanism works end to end — real ciphertext at rest, real decrypt on
+checkout — without costing anyone the ability to read or audit the
+source. CI (`.github/actions/decrypt-securegit`) unlocks with that same
+published passphrase before every build/test/scan/publish step.
+
+`trinoris-secure.recovery.txt` and [`recovery-code.txt`](recovery-code.txt)
+dogfood the *other* real scenario: every holder of the passphrase above
+is gone, but the repo and this recovery file both still exist.
+[`scripts/recovery-scenario-demo.sh`](scripts/recovery-scenario-demo.sh)
+proves it for real — a fresh keyring, rebuilt from only the committed
+recovery file and the published code, decrypts real repo content
+byte-for-byte identical to the original. Run it yourself:
+
+```sh
+./scripts/recovery-scenario-demo.sh
+```
+
 ## Packages
 
 | Package | Purpose | Coverage | Audit |

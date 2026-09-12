@@ -1,0 +1,24 @@
+Recovery scenario demo — same dogfooding spirit as secret-pass-phrase.txt.
+
+trinoris-secure.recovery.txt (committed alongside this file) is a real
+`securegit key export-recovery` output: an independently AES-256-GCM
+encrypted copy of every key generation this repo has ever had, keyed by
+a *separate* 256-bit code — not the repo passphrase in secret-pass-
+phrase.txt. It exists for the scenario that file's own passphrase can't
+cover: every holder of the working passphrase is gone (lost, fired,
+hit by a bus), but the repo itself and this recovery file both still
+exist.
+
+The code is published here, in the clear, for the same reason the
+passphrase is published in secret-pass-phrase.txt: this is the public,
+open-source tool demonstrating its own real recovery path end to end,
+not describing it. scripts/recovery-scenario-demo.sh proves it for
+real — wipes a fresh keyring, runs the actual
+`securegit key import-recovery` using only this code, and decrypts a
+real file with the freshly-chosen passphrase that command produces.
+Run it yourself:
+
+  ./scripts/recovery-scenario-demo.sh
+
+Recovery code (also usable directly as SECUREGIT_RECOVERY_CODE):
+PBGD-QNKW-YSH5-9YK7-WTVE-SHXF-XCPA-2PZ9-KGM8-G930-DWM7-7DP6-04S5-42C5-TW

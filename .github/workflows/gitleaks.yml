@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: read
       security-events: write   # to upload the SARIF report to code scanning
     steps:
       - uses: actions/checkout@v7
@@ -18,6 +19,15 @@ jobs:
           # Full history, not just the last commit — a secret committed
           # once and later removed is still a leaked secret.
           fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+      # .gitleaks.toml itself (this scan's own config) is real securegit
+      # ciphertext at rest like the rest of this repo — gitleaks can't
+      # even start without decrypting the current checkout first. Past
+      # commits scanned via full git history stay ciphertext as always
+      # (nothing to leak from an opaque blob); this only decrypts HEAD.
+      - uses: ./.github/actions/decrypt-securegit
 
       # Not gitleaks/gitleaks-action — that wrapper now requires a paid
       # GITLEAKS_LICENSE for any organization-owned repository (see its
