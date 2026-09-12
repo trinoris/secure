@@ -64,6 +64,32 @@ checkout — without costing anyone the ability to read or audit the
 source. CI (`.github/actions/decrypt-securegit`) unlocks with that same
 published passphrase before every build/test/scan/publish step.
 
+### How to check out this repo and read the real source
+
+A plain `git clone` gets you ciphertext for everything outside the
+plaintext-excluded paths listed above — expected, not a bug. Three
+commands turn that into the real source, using the same
+`@trinoris/securegit` this repo builds:
+
+```sh
+npm install -g @trinoris/securegit   # or use an existing checkout's own build
+git clone https://github.com/trinoris/secure.git && cd secure
+securegit install
+SECUREGIT_PASSPHRASE="$(cat secret-pass-phrase.txt)" securegit unlock
+```
+
+One more step actually re-materializes the plaintext: Git's own
+stat-cache assumes a file already checked out as ciphertext "matches
+the index" and skips re-running `smudge` even right after `unlock`.
+
+```sh
+git rm --cached -r -q . && git checkout HEAD -- .
+```
+
+From here it's an ordinary working tree — `cat`, open in an editor,
+`git diff`, `git log -p`, all show real plaintext. This is exactly
+what `.github/actions/decrypt-securegit` automates for CI.
+
 `trinoris-secure.recovery.txt` and [`recovery-code.txt`](recovery-code.txt)
 dogfood the *other* real scenario: every holder of the passphrase above
 is gone, but the repo and this recovery file both still exist.
