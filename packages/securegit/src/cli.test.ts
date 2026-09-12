@@ -329,14 +329,32 @@ describe('protect', () => {
     expect(content).toContain('.env filter=securegit diff=securegit merge=securegit -text');
   });
 
-  it('with no pattern given, protects the default secret-shaped patterns instead', async () => {
+  it('with no pattern given, protects everything and excludes .github/workflows/**', async () => {
     const h = harness();
     expect(await h.run(['protect'])).toBe(0);
     const content = await readFile(join(dir, '.gitattributes'), 'utf8');
-    expect(content).toContain('.env filter=securegit');
-    expect(content).toContain('*.pem filter=securegit');
-    expect(content).toContain('secrets/** filter=securegit');
+    expect(content).toContain('** filter=securegit diff=securegit merge=securegit -text');
+    expect(content).toContain('.github/workflows/** -filter -diff -text');
     expect(h.infoText()).toContain('no pattern given');
+  });
+});
+
+describe('exclude', () => {
+  it('requires at least one pattern', async () => {
+    const h = harness();
+    expect(await h.run(['exclude'])).toBe(4);
+    expect(h.stderrText()).toContain('exclude requires at least one pattern');
+  });
+
+  it('carves a plaintext exception out of a catch-all protect pattern', async () => {
+    await execFile('git', ['init', '--quiet'], { cwd: dir });
+    const h = harness();
+    expect(await h.run(['protect'])).toBe(0); // ** by default
+    expect(await h.run(['exclude', 'README.md'])).toBe(0);
+    const content = await readFile(join(dir, '.gitattributes'), 'utf8');
+    expect(content).toContain('README.md -filter -diff -text');
+    const check = await execFile('git', ['check-attr', 'filter', '--', 'README.md'], { cwd: dir });
+    expect(check.stdout).toContain('filter: unset');
   });
 });
 

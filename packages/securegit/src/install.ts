@@ -135,8 +135,28 @@ export async function install(opts: InstallOptions): Promise<void> {
 
 export const EXCLUSION_LINE = '.securegit/** -filter -diff -text';
 
+/**
+ * Git does not exempt `.gitattributes` from its own filter rules the way you
+ * might expect — a broad enough protect pattern (`**`, now the default; or
+ * any repository that manually protects something that wide) would otherwise
+ * encrypt the very file Git needs to read, unfiltered, to know how to filter
+ * anything else at all. Confirmed empirically against real `git check-attr`,
+ * not assumed. Always kept present and always second-to-last, immediately
+ * before EXCLUSION_LINE, regardless of which patterns are protected — this
+ * is a structural requirement of the tool, not something tied to any one
+ * default.
+ */
+export const GITATTRIBUTES_EXCLUSION_LINE = '.gitattributes -filter -diff -text';
+
+/** Always written last, in this order, by every `.gitattributes` update. */
+const TRAILING_LINES = [GITATTRIBUTES_EXCLUSION_LINE, EXCLUSION_LINE];
+
 function attributeLine(pattern: string): string {
   return `${pattern} filter=securegit diff=securegit merge=securegit -text`;
+}
+
+function exclusionLine(pattern: string): string {
+  return `${pattern} -filter -diff -text`;
 }
 
 async function readLines(path: string): Promise<string[]> {
@@ -153,14 +173,19 @@ async function writeLines(path: string, lines: string[]): Promise<void> {
   await writeFile(path, lines.length > 0 ? `${lines.join('\n')}\n` : '', 'utf8');
 }
 
+function stripTrailingLines(lines: string[]): string[] {
+  const trailingSet = new Set<string>(TRAILING_LINES);
+  return lines.filter((line) => !trailingSet.has(line));
+}
+
 async function updateGitattributes(repoDir: string, patterns: string[]): Promise<void> {
   const path = join(repoDir, '.gitattributes');
-  const existing = (await readLines(path)).filter((line) => line !== EXCLUSION_LINE);
+  const existing = stripTrailingLines(await readLines(path));
 
   const present = new Set(existing.map((line) => line.split(/\s+/)[0]));
   const additions = patterns.filter((p) => !present.has(p)).map(attributeLine);
 
-  await writeLines(path, [...existing, ...additions, EXCLUSION_LINE]);
+  await writeLines(path, [...existing, ...additions, ...TRAILING_LINES]);
 }
 
 // ---------------------------------------------------------------------------
@@ -198,21 +223,32 @@ export interface ProtectOptions {
 }
 
 /**
- * `securegit protect` with no pattern given falls back to this list, for a
- * one-command fast setup. Filename/extension shapes only — no directory
- * assumptions like the illustrative `config/production.*` in
- * 02-git-integration.md, since most repositories don't share that layout
- * and an unmatched pattern in `.gitattributes` is a harmless no-op anyway.
+ * `securegit protect` with no pattern given falls back to this: encrypt
+ * everything, secure by default. A curated allowlist of secret-shaped
+ * filenames (the old default) only ever protects what someone thought to
+ * name in advance — a new sensitive file added later, under an unlisted
+ * name, ships as plaintext until someone remembers to `protect` it. `**`
+ * has no such blind spot: nothing new can slip through unnoticed.
  *
  * Deliberately errs broad, not narrow: encrypting a file that turns out not
  * to be sensitive costs nothing but an extra decrypt on read (still plain
  * Git otherwise); missing one that *was* sensitive costs a real leak.
- * `.env.*` covers `.env.local`/`.env.production` etc. at the price of also
- * matching `.env.example` — an explicit, named tradeoff, not an oversight;
- * `securegit unprotect <pattern>` is the escape hatch for any default that
- * doesn't fit a given repository.
+ * `securegit exclude <pattern>` is the escape hatch for anything a given
+ * repository wants to keep plaintext on purpose (a README for GitHub's own
+ * preview, say) — durable and explicit, unlike silently never protecting it.
  */
-export const DEFAULT_PROTECT_PATTERNS = ['.env', '.env.*', '*.pem', '*.key', '*.secret', '*.secrets', 'secrets/**'];
+export const DEFAULT_PROTECT_PATTERNS = ['**'];
+
+/**
+ * Paths `securegit protect` (no args) excludes automatically alongside the
+ * `**` default, via `excludePattern` — not because they're safe to read (no
+ * claim either way), but because encrypting them breaks something outright:
+ * GitHub Actions' own servers parse `.github/workflows/**` directly with no
+ * way to decrypt it first, so an encrypted workflow file simply stops being
+ * recognized as a workflow at all. `securegit protect <pattern>...` (with
+ * an explicit list) skips this — it's specific to the zero-arg fast path.
+ */
+export const DEFAULT_PROTECT_EXCLUSIONS = ['.github/workflows/**'];
 
 /**
  * Protects one or more path patterns: writes them into `.gitattributes` with
@@ -262,4 +298,34 @@ export async function unprotect(repoDir: string, patterns: string[]): Promise<vo
   const remaining = existing.filter((line) => !toRemove.has(line.split(/\s+/)[0]!));
   if (remaining.length === existing.length) return; // nothing matched
   await writeLines(path, remaining);
+}
+
+/**
+ * Carves an explicit, durable plaintext exception out of whatever else
+ * protects this repository — the counterpart `unprotect` can't be, now that
+ * the default is `**` rather than a short discrete list. `unprotect` undoes
+ * one specific earlier `protect <pattern>` call and is a no-op against
+ * anything it didn't itself add; `exclude` instead guarantees the given
+ * pattern is never filtered going forward, regardless of what else in
+ * `.gitattributes` would otherwise have matched it, by writing an explicit
+ * `-filter -diff -text` line that (kept before the two permanent trailing
+ * lines, per Git's own last-match-wins attribute resolution) always outranks
+ * a broader positive pattern written earlier in the file.
+ *
+ * Idempotent — excluding the same pattern twice does not duplicate the line.
+ * Like `protect`, does not touch anything already committed: a file that was
+ * ciphertext before stays ciphertext until it's next edited and re-added (or
+ * `reencrypt` is run).
+ */
+export async function excludePattern(repoDir: string, patterns: string[]): Promise<void> {
+  if (patterns.length === 0) {
+    throw new InstallError('exclude requires at least one pattern');
+  }
+  const path = join(repoDir, '.gitattributes');
+  const existing = stripTrailingLines(await readLines(path));
+
+  const present = new Set(existing);
+  const additions = patterns.map(exclusionLine).filter((line) => !present.has(line));
+
+  await writeLines(path, [...existing, ...additions, ...TRAILING_LINES]);
 }

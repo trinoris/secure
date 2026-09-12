@@ -22,7 +22,15 @@ import {
   setBindPath,
   type RepoConfig,
 } from '@trinoris/securelib/config';
-import { InstallError, install, protect, unprotect, DEFAULT_PROTECT_PATTERNS } from './install.js';
+import {
+  InstallError,
+  install,
+  protect,
+  unprotect,
+  excludePattern,
+  DEFAULT_PROTECT_PATTERNS,
+  DEFAULT_PROTECT_EXCLUSIONS,
+} from './install.js';
 import { AgentInstallError, installAgentTargets, listAgentTargets, AGENT_TARGET_IDS } from './agent-install.js';
 import {
   KeyringError,
@@ -175,7 +183,7 @@ interface HelpEntry {
 }
 
 const HELP_CATEGORIES: Array<{ title: string; commands: string[] }> = [
-  { title: 'Repository', commands: ['init', 'install', 'protect', 'unprotect', 'status', 'verify', 'reencrypt'] },
+  { title: 'Repository', commands: ['init', 'install', 'protect', 'unprotect', 'exclude', 'status', 'verify', 'reencrypt'] },
   { title: 'Session', commands: ['unlock', 'lock'] },
   { title: 'Identity and sharing', commands: ['identity', 'key'] },
   { title: 'Ad hoc (no repository needed)', commands: ['encrypt', 'decrypt', 'inspect'] },
@@ -220,9 +228,11 @@ export const HELP: Record<string, HelpEntry> = {
     usage: 'securegit protect [<pattern>...] [--no-residue]',
     summary: 'Add path patterns to .gitattributes so Git routes them through the encryption filter.',
     details: [
-      'Called with no pattern at all, protects a conservative default set of common secret-shaped',
-      'filenames instead — a fast-setup path for a first-time repository. The confirmation printed',
-      'afterward names exactly which patterns were applied; .gitattributes has the durable record.',
+      'Called with no pattern at all, protects everything (**) instead — secure by default, so a new',
+      'file added later never ships as plaintext just because nobody remembered to name it. Excludes',
+      '.github/workflows/** automatically in that case (GitHub Actions cannot parse an encrypted',
+      'workflow file); `securegit exclude <pattern>` adds any other deliberate plaintext exception.',
+      'The confirmation printed afterward names exactly what was applied and excluded.',
     ],
     flags: [{ flag: '--no-residue', desc: 'skip adding .gitignore entries for editor/merge residue files' }],
     examples: ['securegit protect', "securegit protect '.env' 'config/production.*'"],
@@ -232,9 +242,24 @@ export const HELP: Record<string, HelpEntry> = {
     summary: 'Remove path patterns from .gitattributes. Forward-only, like key rotation.',
     details: [
       'Already-committed blobs under a removed pattern stay encrypted until the file is next edited',
-      'and re-added (or `reencrypt` is run). A pattern that was never protected is a silent no-op.',
+      'and re-added (or `reencrypt` is run). A pattern that was never protected is a silent no-op —',
+      'for a pattern still covered by something broader (like the ** default), use `securegit exclude`',
+      'instead, which guarantees the pattern is not filtered rather than just undoing one earlier call.',
     ],
     examples: ["securegit unprotect '*.pem'"],
+  },
+  exclude: {
+    usage: 'securegit exclude <pattern>...',
+    summary: 'Carve a durable plaintext exception out of whatever else protects this repository.',
+    details: [
+      'Writes an explicit `-filter -diff -text` line that outranks any broader positive pattern',
+      "already in .gitattributes (Git's own last-match-wins attribute resolution), so the given",
+      'pattern is never filtered going forward regardless of what else would otherwise have matched',
+      "it — the escape hatch `unprotect` can't be once protection comes from a blanket pattern like",
+      '`**` rather than a short discrete list. Idempotent; already-committed blobs are unaffected',
+      'until the file is next edited and re-added (or `reencrypt` is run).',
+    ],
+    examples: ['securegit exclude README.md', "securegit exclude '.github/workflows/**'"],
   },
   status: {
     usage: 'securegit status [--json]',
@@ -976,16 +1001,22 @@ async function cmdProtect(args: string[], io: CliIO): Promise<number> {
   const residuePatterns = !args.includes('--no-residue');
   try {
     await protect(io.cwd, patterns, { residuePatterns });
+    if (usingDefaults) {
+      await excludePattern(io.cwd, DEFAULT_PROTECT_EXCLUSIONS);
+    }
   } catch (e) {
     io.stderr((e as Error).message);
     return EXIT_USAGE;
   }
   io.info(
     usingDefaults
-      ? `securegit: no pattern given — protecting common secret-shaped defaults:\n` +
+      ? `securegit: no pattern given — protecting everything by default:\n` +
           `  ${patterns.join(', ')}\n` +
-          `  action: \`securegit unprotect <pattern>\` removes one that doesn't fit;\n` +
-          `          \`securegit protect <pattern>\` adds more`
+          `  except (can't work encrypted, excluded automatically):\n` +
+          `  ${DEFAULT_PROTECT_EXCLUSIONS.join(', ')}\n` +
+          `  action: \`securegit exclude <pattern>\` carves out a plaintext exception on purpose\n` +
+          `          (a README for GitHub's own preview, say); \`securegit protect <pattern>\`\n` +
+          `          still works for a narrower, explicit list instead of this default`
       : `securegit: protecting ${patterns.join(', ')}`,
   );
   return EXIT_OK;
@@ -1005,6 +1036,28 @@ async function cmdUnprotect(args: string[], io: CliIO): Promise<number> {
   }
   io.info(
     `securegit: no longer protecting ${patterns.join(', ')}\n` +
+      '  warning: blobs already committed under this pattern stay encrypted — this only\n' +
+      '           changes what happens the next time the file is edited and re-added\n' +
+      '  action: git add .gitattributes && git commit',
+  );
+  return EXIT_OK;
+}
+
+async function cmdExclude(args: string[], io: CliIO): Promise<number> {
+  const patterns = args.filter((a) => !a.startsWith('--'));
+  if (patterns.length === 0) {
+    io.stderr('securegit: exclude requires at least one pattern');
+    return EXIT_USAGE;
+  }
+  try {
+    await excludePattern(io.cwd, patterns);
+  } catch (e) {
+    io.stderr((e as Error).message);
+    return EXIT_USAGE;
+  }
+  io.info(
+    `securegit: excluding ${patterns.join(', ')} — will not be filtered, regardless of\n` +
+      '  what else in .gitattributes would otherwise have matched\n' +
       '  warning: blobs already committed under this pattern stay encrypted — this only\n' +
       '           changes what happens the next time the file is edited and re-added\n' +
       '  action: git add .gitattributes && git commit',
@@ -2748,6 +2801,9 @@ export async function runCli(io: CliIO): Promise<number> {
       case 'unprotect':
         if (wantsHelp(rest)) return showHelp(renderCommandHelp('unprotect', HELP.unprotect!));
         return await cmdUnprotect(rest, io);
+      case 'exclude':
+        if (wantsHelp(rest)) return showHelp(renderCommandHelp('exclude', HELP.exclude!));
+        return await cmdExclude(rest, io);
       case 'unlock':
         if (wantsHelp(rest)) return showHelp(renderCommandHelp('unlock', HELP.unlock!));
         return await cmdUnlock(rest, io);

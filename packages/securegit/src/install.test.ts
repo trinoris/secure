@@ -9,8 +9,12 @@ import {
   install,
   protect,
   unprotect,
+  excludePattern,
   swapPattern,
   EXCLUSION_LINE,
+  GITATTRIBUTES_EXCLUSION_LINE,
+  DEFAULT_PROTECT_PATTERNS,
+  DEFAULT_PROTECT_EXCLUSIONS,
 } from './install.js';
 
 const execFile = promisify(execFileCb);
@@ -227,10 +231,14 @@ describe('protect()', () => {
     await expect(protect(dir, [])).rejects.toBeInstanceOf(InstallError);
   });
 
-  it('creates .gitattributes with the pattern line and the exclusion last', async () => {
+  it('creates .gitattributes with the pattern line and the exclusions last', async () => {
     await protect(dir, ['.env']);
     const lines = (await readAttrs()).trimEnd().split('\n');
-    expect(lines).toEqual(['.env filter=securegit diff=securegit merge=securegit -text', EXCLUSION_LINE]);
+    expect(lines).toEqual([
+      '.env filter=securegit diff=securegit merge=securegit -text',
+      GITATTRIBUTES_EXCLUSION_LINE,
+      EXCLUSION_LINE,
+    ]);
   });
 
   it('writes the exact documented line format', async () => {
@@ -238,13 +246,14 @@ describe('protect()', () => {
     expect(await readAttrs()).toContain('*.secret filter=securegit diff=securegit merge=securegit -text\n');
   });
 
-  it('appends a new pattern to an existing file, exclusion still last', async () => {
+  it('appends a new pattern to an existing file, exclusions still last', async () => {
     await protect(dir, ['.env']);
     await protect(dir, ['*.secret']);
     const lines = (await readAttrs()).trimEnd().split('\n');
     expect(lines).toEqual([
       '.env filter=securegit diff=securegit merge=securegit -text',
       '*.secret filter=securegit diff=securegit merge=securegit -text',
+      GITATTRIBUTES_EXCLUSION_LINE,
       EXCLUSION_LINE,
     ]);
   });
@@ -265,12 +274,13 @@ describe('protect()', () => {
     expect(content).toContain('.env filter=securegit diff=securegit merge=securegit -text');
   });
 
-  it('moves a stray exclusion line back to the end', async () => {
-    await writeFile(gitattributesPath(), `${EXCLUSION_LINE}\n*.png binary\n`, 'utf8');
+  it('moves stray exclusion lines back to the end, in the fixed order', async () => {
+    await writeFile(gitattributesPath(), `${EXCLUSION_LINE}\n*.png binary\n${GITATTRIBUTES_EXCLUSION_LINE}\n`, 'utf8');
     await protect(dir, ['.env']);
     const lines = (await readAttrs()).trimEnd().split('\n');
-    expect(lines[lines.length - 1]).toBe(EXCLUSION_LINE);
+    expect(lines.slice(-2)).toEqual([GITATTRIBUTES_EXCLUSION_LINE, EXCLUSION_LINE]);
     expect(lines.filter((l) => l === EXCLUSION_LINE)).toHaveLength(1);
+    expect(lines.filter((l) => l === GITATTRIBUTES_EXCLUSION_LINE)).toHaveLength(1);
   });
 
   it('accepts multiple patterns in one call', async () => {
@@ -293,6 +303,23 @@ describe('protect()', () => {
       '.securegit/recipients/deadbeef.json',
     ]);
     expect(check).toContain('filter: unset');
+  });
+
+  it('.gitattributes itself is never filtered, even under a catch-all protect pattern', async () => {
+    // Confirmed against real git attribute resolution (not assumed): a
+    // blanket pattern like `**` would otherwise also match .gitattributes
+    // itself, which git needs to read unfiltered to resolve attributes at
+    // all — see GITATTRIBUTES_EXCLUSION_LINE's own doc comment.
+    await protect(dir, ['**']);
+    const check = await git(dir, ['check-attr', 'filter', '--', '.gitattributes']);
+    expect(check).toContain('filter: unset');
+  });
+
+  it("no pattern given (DEFAULT_PROTECT_PATTERNS) protects everything", async () => {
+    expect(DEFAULT_PROTECT_PATTERNS).toEqual(['**']);
+    await protect(dir, DEFAULT_PROTECT_PATTERNS);
+    const check = await git(dir, ['check-attr', 'filter', '--', 'src/anything/at/all.ts']);
+    expect(check).toContain('filter: securegit');
   });
 
   describe('residue .gitignore entries (T12)', () => {
@@ -341,11 +368,11 @@ describe('unprotect()', () => {
     await expect(unprotect(dir, [])).rejects.toBeInstanceOf(InstallError);
   });
 
-  it('removes the pattern line, keeping the exclusion line', async () => {
+  it('removes the pattern line, keeping the exclusion lines', async () => {
     await protect(dir, ['.env']);
     await unprotect(dir, ['.env']);
     const lines = (await readAttrs()).trimEnd().split('\n');
-    expect(lines).toEqual([EXCLUSION_LINE]);
+    expect(lines).toEqual([GITATTRIBUTES_EXCLUSION_LINE, EXCLUSION_LINE]);
   });
 
   it('removes only the named pattern, leaving the others intact', async () => {
@@ -383,6 +410,63 @@ describe('unprotect()', () => {
     await expect(readAttrs()).rejects.toThrow(); // no .gitattributes exists yet
     await unprotect(dir, ['.env']); // no-op, must not throw
     await expect(readAttrs()).rejects.toThrow(); // still doesn't exist
+  });
+});
+
+describe('excludePattern()', () => {
+  const gitattributesPath = (): string => join(dir, '.gitattributes');
+  const readAttrs = async (): Promise<string> => readFile(gitattributesPath(), 'utf8');
+
+  it('refuses an empty pattern list', async () => {
+    await expect(excludePattern(dir, [])).rejects.toBeInstanceOf(InstallError);
+  });
+
+  it('carves a real exception out of a catch-all protect pattern', async () => {
+    await protect(dir, ['**']);
+    await excludePattern(dir, ['README.md']);
+    const check = await git(dir, ['check-attr', 'filter', '--', 'README.md']);
+    expect(check).toContain('filter: unset');
+    // Unrelated paths stay protected — this isn't a second catch-all.
+    const other = await git(dir, ['check-attr', 'filter', '--', 'src/index.ts']);
+    expect(other).toContain('filter: securegit');
+  });
+
+  it('writes the exclusion line before the two permanent trailing lines', async () => {
+    await protect(dir, ['**']);
+    await excludePattern(dir, ['README.md']);
+    const lines = (await readAttrs()).trimEnd().split('\n');
+    expect(lines).toEqual([
+      '** filter=securegit diff=securegit merge=securegit -text',
+      'README.md -filter -diff -text',
+      GITATTRIBUTES_EXCLUSION_LINE,
+      EXCLUSION_LINE,
+    ]);
+  });
+
+  it('is idempotent — excluding the same pattern twice does not duplicate the line', async () => {
+    await protect(dir, ['**']);
+    await excludePattern(dir, ['README.md']);
+    await excludePattern(dir, ['README.md']);
+    const lines = (await readAttrs()).trimEnd().split('\n');
+    expect(lines.filter((l) => l === 'README.md -filter -diff -text')).toHaveLength(1);
+  });
+
+  it('accepts multiple patterns in one call', async () => {
+    await protect(dir, ['**']);
+    await excludePattern(dir, ['README.md', '.github/workflows/**']);
+    const content = await readAttrs();
+    expect(content).toContain('README.md -filter -diff -text');
+    expect(content).toContain('.github/workflows/** -filter -diff -text');
+  });
+
+  it('works even before anything has been protected', async () => {
+    await excludePattern(dir, ['README.md']);
+    const lines = (await readAttrs()).trimEnd().split('\n');
+    expect(lines).toEqual(['README.md -filter -diff -text', GITATTRIBUTES_EXCLUSION_LINE, EXCLUSION_LINE]);
+  });
+
+  it('DEFAULT_PROTECT_EXCLUSIONS names .github/workflows/**', () => {
+    expect(DEFAULT_PROTECT_EXCLUSIONS).toEqual(['.github/workflows/**']);
   });
 });
 

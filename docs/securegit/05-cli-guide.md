@@ -35,7 +35,14 @@ securegit protect config/production.json '*.pem'
   Idempotent — safe to run again if you're ever unsure whether it's done.
 - **`protect <pattern>…`** adds patterns to `.gitattributes` (committed,
   so everyone who clones gets the same rules). Takes any number of
-  patterns: `securegit protect '*.env' secrets/**`.
+  patterns: `securegit protect '*.env' secrets/**`. Called with no pattern
+  at all, `securegit protect` protects everything (`**`) instead — secure
+  by default, so a file added later never ships as plaintext just because
+  nobody named it in advance — automatically excluding
+  `.github/workflows/**` (GitHub Actions can't parse an encrypted workflow
+  file). Use `securegit exclude <pattern>…` for any other deliberate
+  plaintext exception, e.g. a README you want GitHub's own preview to
+  keep rendering.
 
 From here on, nothing about your day-to-day Git workflow changes:
 
@@ -50,7 +57,11 @@ files, from a machine that holds the key.
 removes it from `.gitattributes` — but only going forward. Whatever's
 already committed under that pattern stays encrypted until you edit and
 re-commit it (or run `reencrypt`, below); `unprotect` warns about this
-every time so it's never a silent surprise.
+every time so it's never a silent surprise. `unprotect` only undoes an
+earlier `protect <pattern>` call, though — for a pattern still covered by
+something broader (the `**` default, or any other wide pattern), use
+`securegit exclude <pattern>…` instead: it writes an explicit plaintext
+exception that wins regardless of what else would otherwise have matched.
 
 ## On a second machine (or a fresh clone)
 

@@ -24,7 +24,7 @@ import { signingKeyFingerprint } from '@trinoris/securelib/identity';
 import { equalCt } from '@trinoris/securelib/crypto';
 import type { KeyProvider } from '@trinoris/securelib/provider';
 import { looksLikeEnvelope } from '@trinoris/securelib/envelope';
-import { EXCLUSION_LINE, RESIDUE_SUFFIXES } from './install.js';
+import { EXCLUSION_LINE, GITATTRIBUTES_EXCLUSION_LINE, RESIDUE_SUFFIXES } from './install.js';
 import {
   recipientsDir,
   recipientPath,
@@ -450,11 +450,11 @@ export async function verify(opts: VerifyOptions): Promise<VerifyReport> {
   const patternCount = attrLines.filter((l) => l.includes('filter=securegit')).length;
   checks.push({ id: 'attributes-present', label: 'attributes present', ok: patternCount > 0 });
 
-  const lastLine = attrLines[attrLines.length - 1];
+  const lastTwoLines = attrLines.slice(-2);
   checks.push({
     id: 'metadata-exclusion',
     label: 'metadata exclusion',
-    ok: lastLine === EXCLUSION_LINE,
+    ok: lastTwoLines.length === 2 && lastTwoLines[0] === GITATTRIBUTES_EXCLUSION_LINE && lastTwoLines[1] === EXCLUSION_LINE,
   });
 
   const trackedPaths = await listTrackedPaths(opts.repoDir);
