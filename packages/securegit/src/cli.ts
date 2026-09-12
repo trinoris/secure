@@ -157,7 +157,7 @@ export interface CliIO {
 }
 
 const USAGE =
-  'usage: securegit <init|install|protect|unprotect|unlock|lock|status|identity|key|agent|verify|reencrypt|clean|smudge|textconv|merge|encrypt|decrypt|inspect|filter-process> ...';
+  'usage: securegit <init|install|protect|unprotect|exclude|unlock|lock|status|identity|key|agent|verify|reencrypt|clean|smudge|textconv|merge|encrypt|decrypt|inspect|filter-process> ...';
 
 // ---------------------------------------------------------------------------
 // `--help` / `-h` / `help`
