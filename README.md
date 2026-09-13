@@ -70,6 +70,23 @@ checkout — without costing anyone the ability to read or audit the
 source. CI (`.github/actions/decrypt-securegit`) unlocks with that same
 published passphrase before every build/test/scan/publish step.
 
+**These seven agent-instruction files are hand-authored for this repo
+specifically — they are a separate, unrelated thing from
+`securegit agent install`** ([spec 17](specs/securegit/17-agent-integration.md)),
+the CLI feature that writes *generic* securegit guidance into someone
+else's real repo. The two must never be conflated: this repo's own
+files correctly say "the passphrase is published in the clear, on
+purpose" (true only here, for open-source dogfooding reasons); `agent
+install`'s generic output correctly says the opposite — "never expose
+your passphrase" (true for every real consumer repo, including yours).
+Where both want the same conventional path (`AGENTS.md`, `GEMINI.md` —
+Codex CLI and Gemini CLI only ever look at the repo root, no subpath
+option), `agent install` already refuses to touch this repo's own
+hand-authored file (no `managed by: securegit agent install` marker on
+it) unless `--force` is passed — never pass `--force` here, it would
+silently replace this repo's own decrypt-critical instructions with
+generic advice that doesn't mention this repo's passphrase at all.
+
 ### How to check out this repo and read the real source
 
 A plain `git clone` gets you ciphertext for everything outside the

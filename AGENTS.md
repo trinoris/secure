@@ -1,5 +1,18 @@
 # Agent guide — trinoris-secure
 
+> **This file is hand-authored for this repo's own dogfooding setup — it
+> is not, and must never become, `securegit agent install`'s generated
+> output.** That CLI feature (spec [17](specs/securegit/17-agent-integration.md))
+> writes *generic* securegit guidance for someone else's real repo, and
+> its own generic advice is the opposite of what this file says below
+> (it correctly says "never expose your passphrase"; this repo
+> deliberately does, for open-source dogfooding reasons explained in
+> README.md). The two are incompatible content for the same path.
+> `securegit agent install codex` already refuses to touch this file
+> (no `managed by: securegit agent install` marker here) — never pass
+> `--force` to overwrite it; that would silently delete the
+> checkout/unlock instructions this repo cannot be worked on without.
+
 Cross-tool instructions (the [AGENTS.md](https://agents.md) convention) —
 read this if you are Cursor, Windsurf, Cline, Aider, OpenAI Codex,
 Gemini CLI, JetBrains Junie, or any other coding agent working in this

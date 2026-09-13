@@ -1,5 +1,17 @@
 # trinoris-secure — read before touching any source file
 
+> **This file is hand-authored for this repo's own dogfooding setup — it
+> is not, and must never become, `securegit agent install`'s generated
+> output.** That CLI feature (spec 17) writes *generic* securegit
+> guidance for someone else's real repo, and its own generic advice is
+> the opposite of what this file says below (it correctly says "never
+> expose your passphrase"; this repo deliberately does, for open-source
+> dogfooding reasons — see README.md). `securegit agent install gemini`
+> already refuses to touch this file (no `managed by: securegit agent
+> install` marker here) — never pass `--force`; that would silently
+> delete the checkout/unlock instructions this repo cannot be worked on
+> without.
+
 This repo (`@trinoris/securegit`'s own repository) dogfoods itself: outside
 `docs/`, `README.md`, `LICENSE`, `.github/workflows/`, `.github/actions/`,
 `.claude/`, `.github/copilot-instructions.md`, `AGENTS.md`, `.cursor/`,
