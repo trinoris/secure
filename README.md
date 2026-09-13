@@ -48,7 +48,10 @@ filter is invisible until you go looking for it.
 ## This repository dogfoods itself
 
 Outside `docs/`, `README.md`, `LICENSE`, `.github/workflows/`,
-`.github/actions/`, and the package manifests (`package.json`,
+`.github/actions/`, `.claude/` (an agent has to be able to read
+[the checkout-and-unlock skill](.claude/skills/checkout-and-unlock/SKILL.md)
+before it can decrypt anything — same bootstrap reasoning as the
+workflows), and the package manifests (`package.json`,
 `package-lock.json` — kept plaintext so Dependabot and a plain `npm ci`
 still work), every file in this repo is real securegit ciphertext at
 rest — the same clean/smudge filter, the same AEAD envelope, this tool
@@ -75,7 +78,7 @@ commands turn that into the real source, using the same
 npm install -g @trinoris/securegit   # or use an existing checkout's own build
 git clone https://github.com/trinoris/secure.git && cd secure
 securegit install
-SECUREGIT_PASSPHRASE="$(cat secret-pass-phrase.txt)" securegit unlock
+SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" securegit unlock
 ```
 
 One more step actually re-materializes the plaintext: Git's own
@@ -85,6 +88,13 @@ the index" and skips re-running `smudge` even right after `unlock`.
 ```sh
 git rm --cached -r -q . && git checkout HEAD -- .
 ```
+
+An AI coding agent working in this repo should follow
+[`.claude/skills/checkout-and-unlock`](.claude/skills/checkout-and-unlock/SKILL.md)
+instead of improvising this sequence from memory — it names the one
+real mistake (`cat` instead of `tail -1` on the passphrase file) that
+silently fails `unlock` every time, and it verifies real plaintext came
+back rather than trusting a clean exit code.
 
 From here it's an ordinary working tree — `cat`, open in an editor,
 `git diff`, `git log -p`, all show real plaintext. This is exactly

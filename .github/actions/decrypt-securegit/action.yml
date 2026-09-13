@@ -28,7 +28,11 @@ runs:
       shell: bash
       run: |
         securegit install
-        SECUREGIT_PASSPHRASE="$(cat secret-pass-phrase.txt)" securegit unlock
+        # tail -1, never cat — the file is mostly explanatory prose;
+        # only its last line is the actual passphrase (confirmed the
+        # hard way: `cat`'s full contents as the "passphrase" fails
+        # every unlock).
+        SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" securegit unlock
         # Git's own stat-cache assumes an already-checked-out ciphertext
         # file "matches the index" and skips re-running smudge even after
         # unlock — emptying the index first removes that shortcut so the

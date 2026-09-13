@@ -11,5 +11,6 @@ packages/*/package.json -filter -diff -text
 .github/actions/** -filter -diff -text
 *.recovery.txt -filter -diff -text
 /recovery-code.txt -filter -diff -text
+.claude/** -filter -diff -text
 .gitattributes -filter -diff -text
 .securegit/** -filter -diff -text
