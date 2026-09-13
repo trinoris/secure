@@ -2,17 +2,29 @@ name: Decrypt securegit-protected source
 description: >
   This repository dogfoods its own tool: everything outside the
   plaintext-excluded paths in .gitattributes (workflows, this action,
-  docs/, README.md, LICENSE, package manifests, secret-pass-phrase.txt)
-  is real securegit ciphertext at rest. The decrypt key isn't a CI
-  secret here — see secret-pass-phrase.txt for why it's published in
-  the clear: this is the open-source tool itself, so hiding its own
-  source from CI (or from anyone auditing it) would defeat the point.
-  Bootstraps via the last published @trinoris/securegit release (this
-  repo's own CI can't decrypt its own in-progress source with a securegit
-  built FROM that same still-encrypted source — same reasoning
-  trinoris-safezone's CI uses a dedicated machine identity's own
-  already-published CLI, just with a public passphrase file here
-  instead of a private machine identity).
+  docs/, README.md, LICENSE, package manifests, secret-pass-phrase.txt,
+  recovery-code.txt, trinoris-secure.recovery.txt) is real securegit
+  ciphertext at rest. Neither the passphrase nor the recovery code is a
+  CI secret here — see secret-pass-phrase.txt for why both are
+  published in the clear: this is the open-source tool itself, so
+  hiding its own source from CI (or from anyone auditing it) would
+  defeat the point. A real, previously-caught bug: `securegit unlock`
+  alone only ever works on the one machine that originally ran
+  `securegit init` — it decrypts a LOCAL keyring
+  (~/.securegit/repos/<repoId>/keyring.json), never committed to Git by
+  design, so a fresh CI runner has no keyring to unlock at all
+  ("no keyring found for this repository", confirmed the hard way on a
+  real GitHub Actions run). `securegit key import-recovery` is the real
+  fresh-machine bootstrap: it rebuilds a keyring from nothing using
+  only the committed recovery file and the published recovery code,
+  wrapped under the same published passphrase — safe to run
+  unconditionally even on a machine that already has a keyring
+  (verified: it just adds an equivalent copy). Bootstraps via the last
+  published @trinoris/securegit release (this repo's own CI can't
+  decrypt its own in-progress source with a securegit built FROM that
+  same still-encrypted source — same reasoning trinoris-safezone's CI
+  uses a dedicated machine identity's own already-published CLI, just
+  with public files here instead of a private machine identity).
 runs:
   using: composite
   steps:
@@ -24,15 +36,23 @@ runs:
         echo "@trinoris:registry=https://npm.pkg.github.com" >> ~/.npmrc
         echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> ~/.npmrc
         npm install -g @trinoris/securegit@0.1.0
-    - name: Unlock with the repo's own published demo passphrase
+    - name: Unlock via the repo's own published recovery file + code
       shell: bash
       run: |
         securegit install
-        # tail -1, never cat — the file is mostly explanatory prose;
-        # only its last line is the actual passphrase (confirmed the
-        # hard way: `cat`'s full contents as the "passphrase" fails
+        # tail -1, never cat — both files are mostly explanatory prose;
+        # only the last line of each is the actual secret (confirmed
+        # the hard way: `cat`'s full contents as the "passphrase" fails
         # every unlock).
-        SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" securegit unlock
+        RECOVERY_CODE="$(tail -1 recovery-code.txt)"
+        PASSPHRASE="$(tail -1 secret-pass-phrase.txt)"
+        # Rebuilds a local keyring from the committed recovery file —
+        # `securegit unlock` alone has nothing to unlock on a fresh
+        # runner, since it decrypts a local keyring that's never
+        # committed to Git by design.
+        SECUREGIT_RECOVERY_CODE="$RECOVERY_CODE" SECUREGIT_PASSPHRASE="$PASSPHRASE" \
+          securegit key import-recovery --in trinoris-secure.recovery.txt
+        SECUREGIT_PASSPHRASE="$PASSPHRASE" securegit unlock
         # Git's own stat-cache assumes an already-checked-out ciphertext
         # file "matches the index" and skips re-running smudge even after
         # unlock — emptying the index first removes that shortcut so the

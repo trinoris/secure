@@ -16,8 +16,8 @@ checkout.
 Follow every step below in order. Do not skip the verification step or
 declare success from a command's exit code alone — `securegit unlock`
 and `git checkout` can both exit 0 while a file is still ciphertext, and
-the one real bug this recipe exists to prevent (see "The one mistake
-that silently breaks this") does exactly that.
+the two real bugs this recipe exists to prevent (see "The two mistakes
+that silently break this") do exactly that.
 
 ## 1. Confirm securegit is available
 
@@ -36,15 +36,28 @@ cd /path/to/trinoris-secure
 securegit install
 ```
 
-## 3. Unlock with the published passphrase
+## 3. Rebuild a keyring from the committed recovery file, then unlock
 
 ```sh
+SECUREGIT_RECOVERY_CODE="$(tail -1 recovery-code.txt)" SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" \
+  securegit key import-recovery --in trinoris-secure.recovery.txt
 SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" securegit unlock
 ```
 
+The `import-recovery` line is not optional, even though it looks like
+it should only matter for disaster recovery. Skipping it and running
+`securegit unlock` alone fails with `no keyring found for this
+repository` on every machine except whichever one originally ran
+`securegit init` — `unlock` decrypts a *local* keyring
+(`~/.securegit/repos/<repoId>/keyring.json`) that is never committed to
+Git by design. `import-recovery` is what actually creates that keyring
+from the committed recovery file; it's safe to run even on a machine
+that already has one (it just adds an equivalent copy), so always run
+it rather than guessing whether this machine needs it.
+
 Expect: `securegit: unlocked (generation <fingerprint>)`. Anything else
-(`could not unlock — wrong passphrase...`) means step 3 itself failed —
-see "The one mistake that silently breaks this" below before retrying.
+means a step above failed — see "The two mistakes that silently break
+this" below before retrying.
 
 ## 4. Force Git to actually re-materialize plaintext
 
@@ -81,22 +94,31 @@ Every check's `"ok"` must be `true`. Any `false` entry means something
 about this repo's own securegit setup regressed — do not proceed with
 edits/builds until it's resolved.
 
-## The one mistake that silently breaks this
+## The two mistakes that silently break this
 
-`secret-pass-phrase.txt` is mostly explanatory prose — the passphrase is
-only its **last line**. `SECUREGIT_PASSPHRASE="$(cat secret-pass-
-phrase.txt)"` reads the *entire file* as the passphrase and fails
-`unlock` with "could not unlock — wrong passphrase" every time. Always
-use `tail -1 secret-pass-phrase.txt`, never `cat`. This is a real bug
-this skill exists to prevent, not a hypothetical — it was caught the
-hard way while wiring up this repo's own CI.
+1. **`cat` instead of `tail -1`.** `secret-pass-phrase.txt` and
+   `recovery-code.txt` are both mostly explanatory prose — the actual
+   secret is only each file's **last line**. `$(cat secret-pass-
+   phrase.txt)` reads the *entire file* as the passphrase and fails
+   every time. Always `tail -1`, never `cat`, on either file.
+2. **Skipping `import-recovery` and running `securegit unlock` alone.**
+   This works *only* on the one machine that originally ran `securegit
+   init` — `unlock` decrypts a local keyring
+   (`~/.securegit/repos/<repoId>/keyring.json`) that is never committed
+   to Git by design. Every other machine, including any fresh Claude
+   Code session's own sandbox, has no keyring to unlock and fails with
+   `no keyring found for this repository` regardless of how correct the
+   passphrase is. `import-recovery` (step 3 above) is what actually
+   creates one.
 
-## Recovery scenario (a different situation, not the everyday path)
+Both were caught the hard way while wiring up this repo's own CI — the
+second one on a real GitHub Actions run, not in local testing (local
+testing kept reusing the same machine's already-existing keyring
+without anyone noticing it never got exercised).
 
-If `secret-pass-phrase.txt` itself is ever lost or wrong, this repo also
-dogfoods the recovery path: `recovery-code.txt` (its own last-line
-convention, same caveat as above) plus `trinoris-secure.recovery.txt`
-rebuild a working keyring from scratch via
-`securegit key import-recovery`. Don't hand-run that — use
-`./scripts/recovery-scenario-demo.sh` and read its output; it already
-implements and verifies the full sequence end to end.
+## Verifying the recovery mechanism itself (not the everyday path)
+
+`./scripts/recovery-scenario-demo.sh` implements and verifies this
+exact sequence end to end from a genuinely isolated `SECUREGIT_HOME` —
+run it if you want to confirm the recovery file + code still work,
+rather than hand-rolling the same check.

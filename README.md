@@ -90,7 +90,7 @@ generic advice that doesn't mention this repo's passphrase at all.
 ### How to check out this repo and read the real source
 
 A plain `git clone` gets you ciphertext for everything outside the
-plaintext-excluded paths listed above — expected, not a bug. Three
+plaintext-excluded paths listed above — expected, not a bug. Five
 commands turn that into the real source, using the same
 `@trinoris/securegit` this repo builds:
 
@@ -98,8 +98,25 @@ commands turn that into the real source, using the same
 npm install -g @trinoris/securegit   # or use an existing checkout's own build
 git clone https://github.com/trinoris/secure.git && cd secure
 securegit install
+SECUREGIT_RECOVERY_CODE="$(tail -1 recovery-code.txt)" SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" \
+  securegit key import-recovery --in trinoris-secure.recovery.txt
 SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" securegit unlock
 ```
+
+**`securegit unlock` alone is not enough on a fresh machine — this was
+a real bug, caught on a real CI run.** `unlock` only ever decrypts a
+*local* keyring at `~/.securegit/repos/<repoId>/keyring.json`, and that
+file is never committed to Git by design (the whole point of
+client-side key management). It exists only on whichever machine
+originally ran `securegit init` — anywhere else, `unlock` fails with
+"no keyring found for this repository" no matter how correct the
+passphrase is. `securegit key import-recovery` is what actually
+rebuilds a keyring from nothing, using the committed
+[`trinoris-secure.recovery.txt`](trinoris-secure.recovery.txt) and the
+published [`recovery-code.txt`](recovery-code.txt) — safe to run even
+on a machine that already has a keyring (it just adds an equivalent
+copy), so it's the step to always run rather than something to guess
+whether you need.
 
 One more step actually re-materializes the plaintext: Git's own
 stat-cache assumes a file already checked out as ciphertext "matches
@@ -112,10 +129,12 @@ git rm --cached -r -q . && git checkout HEAD -- .
 ### Working on this repo with an AI coding agent
 
 Every agent below should follow its own file instead of improvising the
-checkout+unlock sequence from memory — each names the one real mistake
-(`cat` instead of `tail -1` on the passphrase file) that silently fails
-`unlock` every time, and each verifies real plaintext came back rather
-than trusting a clean exit code:
+checkout+unlock sequence from memory — each names both real mistakes
+caught the hard way on this exact repo (`cat` instead of `tail -1` on
+the passphrase file; `securegit unlock` alone silently failing on any
+machine that isn't the one that ran `init`, since `import-recovery`
+is what actually bootstraps a fresh keyring), and each verifies real
+plaintext came back rather than trusting a clean exit code:
 
 | Tool | File |
 | --- | --- |
@@ -132,9 +151,12 @@ From here it's an ordinary working tree — `cat`, open in an editor,
 what `.github/actions/decrypt-securegit` automates for CI.
 
 `trinoris-secure.recovery.txt` and [`recovery-code.txt`](recovery-code.txt)
-dogfood the *other* real scenario: every holder of the passphrase above
-is gone, but the repo and this recovery file both still exist.
-[`scripts/recovery-scenario-demo.sh`](scripts/recovery-scenario-demo.sh)
+are not a rare fallback — they're the mechanism every checkout above
+actually depends on, since `securegit unlock` alone only works on a
+machine that already has this repo's keyring. They also happen to
+dogfood the real "every original keyring is gone" recovery scenario,
+since rebuilding from nothing is exactly what `import-recovery` does
+either way. [`scripts/recovery-scenario-demo.sh`](scripts/recovery-scenario-demo.sh)
 proves it for real — a fresh keyring, rebuilt from only the committed
 recovery file and the published code, decrypts real repo content
 byte-for-byte identical to the original. Run it yourself:

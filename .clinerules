@@ -14,16 +14,31 @@ the checkout before treating it as broken.
 ```sh
 securegit --version 2>&1 || npm install -g @trinoris/securegit
 securegit install
+SECUREGIT_RECOVERY_CODE="$(tail -1 recovery-code.txt)" SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" \
+  securegit key import-recovery --in trinoris-secure.recovery.txt
 SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" securegit unlock
 git rm --cached -r -q . && git checkout HEAD -- .
 ```
 
-Use `tail -1 secret-pass-phrase.txt`, never `cat` it — the file is
-mostly explanatory prose; `cat`ing the whole thing as the passphrase
-fails `unlock` with "wrong passphrase" every time, silently. The final
-`git rm --cached`/`checkout` line is required — Git's stat-cache skips
-re-running `smudge` on an already-ciphertext file even right after
-`unlock` without it.
+Two real mistakes silently break this, both confirmed on this exact
+repo:
+
+- Use `tail -1`, never `cat`, on `secret-pass-phrase.txt` and
+  `recovery-code.txt` — both files are mostly explanatory prose; `cat`
+  reads the whole file as the secret and fails `unlock` with "wrong
+  passphrase" every time, silently.
+- Never skip the `import-recovery` line. `securegit unlock` alone only
+  works on the one machine that originally ran `securegit init` — it
+  decrypts a *local* keyring (`~/.securegit/repos/<repoId>/keyring.json`)
+  never committed to Git by design. Any other machine fails with "no
+  keyring found for this repository" regardless of how correct the
+  passphrase is; `import-recovery` rebuilds that keyring from the
+  committed recovery file and is safe to run even when a keyring
+  already exists.
+
+The final `git rm --cached`/`checkout` line is required — Git's
+stat-cache skips re-running `smudge` on an already-ciphertext file even
+right after `unlock` without it.
 
 ## Verify, don't assume
 

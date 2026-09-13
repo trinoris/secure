@@ -43,17 +43,30 @@ it's ciphertext, exactly as designed. Decrypt the checkout first.
 ```sh
 securegit --version 2>&1 || npm install -g @trinoris/securegit
 securegit install
+SECUREGIT_RECOVERY_CODE="$(tail -1 recovery-code.txt)" SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" \
+  securegit key import-recovery --in trinoris-secure.recovery.txt
 SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" securegit unlock
 git rm --cached -r -q . && git checkout HEAD -- .
 ```
 
-**The one mistake that silently breaks this, confirmed the hard way in
-this repo's own CI**: `secret-pass-phrase.txt` is mostly explanatory
-prose — the passphrase is only its last line.
-`SECUREGIT_PASSPHRASE="$(cat secret-pass-phrase.txt)"` (the whole file)
-fails `unlock` with "wrong passphrase" every single time, with no
-signal that anything is wrong until a later command hits ciphertext.
-Always `tail -1 secret-pass-phrase.txt`, never `cat` it.
+**Two mistakes silently break this, both confirmed the hard way in
+this repo's own CI:**
+
+1. `secret-pass-phrase.txt` and `recovery-code.txt` are mostly
+   explanatory prose — the actual secret is only each file's last line.
+   `$(cat secret-pass-phrase.txt)` (the whole file) fails `unlock` with
+   "wrong passphrase" every single time, with no signal that anything
+   is wrong until a later command hits ciphertext. Always `tail -1`,
+   never `cat`, on either file.
+2. `securegit unlock` alone, without `import-recovery` first, only
+   works on the one machine that originally ran `securegit init` — it
+   decrypts a *local* keyring (`~/.securegit/repos/<repoId>/keyring.json`)
+   that is never committed to Git by design. Any other machine —
+   including a CI runner, confirmed on a real GitHub Actions run — fails
+   with `no keyring found for this repository` regardless of how
+   correct the passphrase is. `import-recovery` rebuilds that keyring
+   from the committed recovery file; it's safe to run unconditionally,
+   even on a machine that already has one.
 
 The final `git rm --cached -r -q . && git checkout HEAD -- .` line is
 required, not optional cleanup: Git's own stat-cache assumes a file
@@ -80,14 +93,14 @@ real decrypt on checkout) without costing anyone — human or agent — the
 ability to read, audit, or contribute to the source. Full reasoning:
 `README.md`'s "This repository dogfoods itself".
 
-## Recovery scenario — a different situation, not the everyday path
+## Verifying the recovery mechanism itself
 
-If `secret-pass-phrase.txt` is ever lost or wrong, `recovery-code.txt`
-(same last-line convention) plus `trinoris-secure.recovery.txt` rebuild
-a working keyring from scratch via `securegit key import-recovery`.
-Run `./scripts/recovery-scenario-demo.sh` rather than improvising that
-sequence — it already implements and verifies the full recovery path
-end to end.
+`recovery-code.txt` (same last-line convention as the passphrase file)
+plus `trinoris-secure.recovery.txt` are already load-bearing above, not
+a rare fallback — `import-recovery` is what actually bootstraps a
+keyring on any machine. Run `./scripts/recovery-scenario-demo.sh`
+rather than improvising a check yourself — it already implements and
+verifies the full recovery path end to end.
 
 ## Committing changes
 

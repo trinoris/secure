@@ -19,18 +19,32 @@ at its content from the filename or from other files' patterns.
 ```sh
 securegit --version 2>&1 || npm install -g @trinoris/securegit
 securegit install
+SECUREGIT_RECOVERY_CODE="$(tail -1 recovery-code.txt)" SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" \
+  securegit key import-recovery --in trinoris-secure.recovery.txt
 SECUREGIT_PASSPHRASE="$(tail -1 secret-pass-phrase.txt)" securegit unlock
 git rm --cached -r -q . && git checkout HEAD -- .
 ```
 
-**The one real mistake that silently breaks this**: `secret-pass-
-phrase.txt` is mostly explanatory prose — the passphrase is only its
-last line. `SECUREGIT_PASSPHRASE="$(cat secret-pass-phrase.txt)"` (the
-whole file, not `tail -1`) fails `unlock` with "wrong passphrase" every
-time, with no indication anything is wrong until the next command hits
-ciphertext. Always use `tail -1 secret-pass-phrase.txt`. This is a
-confirmed, previously-real bug in this repo's own CI, not a
-hypothetical.
+**Two real mistakes silently break this, both confirmed on this exact
+repo, not hypothetical:**
+
+1. `secret-pass-phrase.txt` and `recovery-code.txt` are mostly
+   explanatory prose — the actual secret is only each file's last line.
+   `$(cat secret-pass-phrase.txt)` (the whole file, not `tail -1`) fails
+   `unlock` with "wrong passphrase" every time, with no indication
+   anything is wrong until the next command hits ciphertext. Always use
+   `tail -1`, never `cat`, on either file.
+2. `securegit unlock` alone, without `import-recovery` first, only
+   works on the one machine that originally ran `securegit init` — it
+   decrypts a *local* keyring (`~/.securegit/repos/<repoId>/keyring.json`)
+   that is never committed to Git by design. Any other machine —
+   including this one, right now — fails with `no keyring found for
+   this repository` regardless of how correct the passphrase is.
+   `import-recovery` rebuilds that keyring from the committed recovery
+   file; it's safe to run unconditionally, even on a machine that
+   already has a keyring (confirmed the hard way on a real GitHub
+   Actions run — the bug had gone unnoticed because local testing kept
+   reusing a machine that already had one).
 
 The `git rm --cached -r -q . && git checkout HEAD -- .` step is not
 optional busywork — Git's own stat-cache assumes a file already
