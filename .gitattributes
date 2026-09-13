@@ -14,5 +14,9 @@ packages/*/package.json -filter -diff -text
 .claude/** -filter -diff -text
 .github/copilot-instructions.md -filter -diff -text
 /AGENTS.md -filter -diff -text
+.cursor/** -filter -diff -text
+/.windsurfrules -filter -diff -text
+/.clinerules -filter -diff -text
+/GEMINI.md -filter -diff -text
 .gitattributes -filter -diff -text
 .securegit/** -filter -diff -text

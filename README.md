@@ -48,13 +48,13 @@ filter is invisible until you go looking for it.
 ## This repository dogfoods itself
 
 Outside `docs/`, `README.md`, `LICENSE`, `.github/workflows/`,
-`.github/actions/`, `.claude/`, `.github/copilot-instructions.md` and
-`AGENTS.md` (an AI coding agent has to be able to read
-[the checkout-and-unlock skill](.claude/skills/checkout-and-unlock/SKILL.md),
-[these Copilot instructions](.github/copilot-instructions.md), or
-[the cross-tool agent guide](AGENTS.md) before it can decrypt anything
-else — same bootstrap reasoning as the workflows), and the package
-manifests (`package.json`,
+`.github/actions/`, every AI-agent instruction file (`.claude/`,
+`.github/copilot-instructions.md`, `AGENTS.md`, `.cursor/`,
+`.windsurfrules`, `.clinerules`, `GEMINI.md` — an agent has to be able
+to read one of these before it can decrypt anything else, same
+bootstrap reasoning as the workflows; see
+["Working on this repo with an AI coding agent"](#working-on-this-repo-with-an-ai-coding-agent)
+below), and the package manifests (`package.json`,
 `package-lock.json` — kept plaintext so Dependabot and a plain `npm ci`
 still work), every file in this repo is real securegit ciphertext at
 rest — the same clean/smudge filter, the same AEAD envelope, this tool
@@ -92,17 +92,23 @@ the index" and skips re-running `smudge` even right after `unlock`.
 git rm --cached -r -q . && git checkout HEAD -- .
 ```
 
-An AI coding agent working in this repo should follow
-[`.claude/skills/checkout-and-unlock`](.claude/skills/checkout-and-unlock/SKILL.md)
-(Claude Code), [`.github/copilot-instructions.md`](.github/copilot-instructions.md)
-(GitHub Copilot — read automatically in Copilot Chat and the Copilot
-coding agent, no invocation needed), or [`AGENTS.md`](AGENTS.md)
-(Cursor, Windsurf, Cline, Aider, OpenAI Codex, Gemini CLI, and other
-tools following the [agents.md](https://agents.md) convention) instead
-of improvising this sequence from memory — all three name the one real
-mistake (`cat` instead of `tail -1` on the passphrase file) that
-silently fails `unlock` every time, and all three verify real
-plaintext came back rather than trusting a clean exit code.
+### Working on this repo with an AI coding agent
+
+Every agent below should follow its own file instead of improvising the
+checkout+unlock sequence from memory — each names the one real mistake
+(`cat` instead of `tail -1` on the passphrase file) that silently fails
+`unlock` every time, and each verifies real plaintext came back rather
+than trusting a clean exit code:
+
+| Tool | File |
+| --- | --- |
+| Claude Code | [`.claude/skills/checkout-and-unlock`](.claude/skills/checkout-and-unlock/SKILL.md) |
+| GitHub Copilot (Chat + coding agent, read automatically) | [`.github/copilot-instructions.md`](.github/copilot-instructions.md) |
+| Cursor | [`.cursor/rules/securegit-checkout.mdc`](.cursor/rules/securegit-checkout.mdc) |
+| Windsurf | [`.windsurfrules`](.windsurfrules) |
+| Cline | [`.clinerules`](.clinerules) |
+| Gemini CLI | [`GEMINI.md`](GEMINI.md) |
+| Everything else (Aider, OpenAI Codex, JetBrains Junie, ...) | [`AGENTS.md`](AGENTS.md) — the [agents.md](https://agents.md) cross-tool convention |
 
 From here it's an ordinary working tree — `cat`, open in an editor,
 `git diff`, `git log -p`, all show real plaintext. This is exactly
