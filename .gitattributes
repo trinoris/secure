@@ -12,5 +12,7 @@ packages/*/package.json -filter -diff -text
 *.recovery.txt -filter -diff -text
 /recovery-code.txt -filter -diff -text
 .claude/** -filter -diff -text
+.github/copilot-instructions.md -filter -diff -text
+/AGENTS.md -filter -diff -text
 .gitattributes -filter -diff -text
 .securegit/** -filter -diff -text
