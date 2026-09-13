@@ -273,6 +273,15 @@ specs/securegit/README.md#why-this-and-not-git-crypt--sops--age).
   the commands you'll actually type, grouped by task, with working
   examples — setup, sharing access, rotation, recovery, and what each
   exit code means.
+- **AI agent instructions** — [`.claude/skills/checkout-and-unlock`](.claude/skills/checkout-and-unlock/SKILL.md),
+  [`.github/copilot-instructions.md`](.github/copilot-instructions.md),
+  [`.cursor/rules/securegit-checkout.mdc`](.cursor/rules/securegit-checkout.mdc),
+  [`.windsurfrules`](.windsurfrules), [`.clinerules`](.clinerules),
+  [`GEMINI.md`](GEMINI.md), and [`AGENTS.md`](AGENTS.md) — the
+  checkout+unlock recipe every coding agent needs before touching this
+  repo's own real source (see
+  ["This repository dogfoods itself"](#this-repository-dogfoods-itself)
+  above for why it's needed at all).
 
 ## Chaos sandbox
 
