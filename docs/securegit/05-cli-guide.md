@@ -16,23 +16,41 @@ information as one machine-readable manifest.
 
 ## Setting up a repository
 
-Three commands, in this order, once per repository:
+Two commands, in this order, once per repository, protect everything by default:
 
 ```sh
 securegit init
 securegit install
-securegit protect config/production.json '*.pem'
 ```
 
 - **`init`** creates `.securegit/config.json` and your first key
   (generation 1), asking for a passphrase to lock it behind. Refuses if
-  you're not inside a Git repository, or if this one's already set up.
-- **`install`** is the one easy to forget, because nothing visibly breaks
-  if you skip it — Git simply won't run the encryption filter at all, and
-  files you "protect" afterward check out and commit as ordinary
-  plaintext. It writes local, never-committed `.git/config` entries
-  telling Git to actually call `securegit` on the patterns you protect.
-  Idempotent — safe to run again if you're ever unsure whether it's done.
+  you're not inside a Git repository, or if this one's already set up —
+  and if this home directory already holds a working keyring for it, warns
+  with the existing repoId/generation/recovery status instead of a bare
+  refusal, so replacing it is never an accident.
+- **`install`** writes local, never-committed `.git/config` entries telling
+  Git to actually call `securegit`, *and* — unless `.gitattributes` already
+  has real patterns — also protects everything (`**`) by default, the same
+  way `protect` alone would with no arguments. Used to be two separate
+  required steps; folded together because skipping the old `install` was
+  the one silent failure mode in this whole tool: nothing visibly broke,
+  Git simply never ran the encryption filter, and "protected" files
+  checked out and committed as ordinary plaintext. Idempotent — safe to
+  run again if you're ever unsure whether it's done. `--no-protect` skips
+  the automatic protect step if you want to run it yourself.
+
+**Want a narrower list instead of everything?** Run `protect` first, with
+your own explicit patterns, *before* `install` — `install`'s own default
+only kicks in when `.gitattributes` has no real pattern yet, so protecting
+narrowly first is what makes `install` leave it alone:
+
+```sh
+securegit init
+securegit protect config/production.json '*.pem'
+securegit install
+```
+
 - **`protect <pattern>…`** adds patterns to `.gitattributes` (committed,
   so everyone who clones gets the same rules). Takes any number of
   patterns: `securegit protect '*.env' secrets/**`. Called with no pattern
@@ -40,11 +58,13 @@ securegit protect config/production.json '*.pem'
   by default, so a file added later never ships as plaintext just because
   nobody named it in advance — automatically excluding
   `.github/workflows/**` (GitHub Actions can't parse an encrypted workflow
-  file). Use `securegit exclude <pattern>…` for any other deliberate
-  plaintext exception, e.g. `securegit exclude /README.md` for a README
-  you want GitHub's own preview to keep rendering — the leading slash
-  matters: a bare `README.md` matches at every depth, same rule as
-  `.gitignore`, and would also exclude `docs/README.md`.
+  file). Adding to an existing `.gitattributes` never touches unrelated
+  content already there (some other tool's own `merge=` driver, say) — only
+  ever adds what wasn't there yet. Use `securegit exclude <pattern>…` for
+  any other deliberate plaintext exception, e.g. `securegit exclude
+  /README.md` for a README you want GitHub's own preview to keep rendering
+  — the leading slash matters: a bare `README.md` matches at every depth,
+  same rule as `.gitignore`, and would also exclude `docs/README.md`.
 
 From here on, nothing about your day-to-day Git workflow changes:
 
