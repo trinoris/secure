@@ -4,6 +4,19 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      # vitest and @vitest/coverage-v8 must move together — the coverage
+      # package's own major version has to match vitest's, not just be
+      # semver-compatible with it. Bumping one alone (two separate PRs,
+      # #8 and #10) broke `test:coverage` outright: coverage-v8@5 expects
+      # vitest@5's internals and fails with "Cannot find package
+      # '@vitest/coverage-v8'" against vitest still at 4.x. Grouping them
+      # makes Dependabot open one combined PR instead of two independently
+      # mergeable (but only jointly working) ones.
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
 
   # Keeps the third-party Actions this repo now depends on (checkout,
   # setup-node, codeql-action, deploy-pages, gitleaks-action, ...) pinned
