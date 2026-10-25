@@ -33,9 +33,12 @@ runs:
       env:
         NODE_AUTH_TOKEN: ${{ github.token }}
       run: |
-        echo "@trinoris:registry=https://npm.pkg.github.com" >> ~/.npmrc
-        echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> ~/.npmrc
-        npm install -g @trinoris/securegit@0.1.0
+        umask 077
+        npmrc="$RUNNER_TEMP/securegit-bootstrap.npmrc"
+        trap 'rm -f "$npmrc"' EXIT
+        printf '%s\n' '@trinoris:registry=https://npm.pkg.github.com' \
+          "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" > "$npmrc"
+        NPM_CONFIG_USERCONFIG="$npmrc" npm install -g @trinoris/securegit@0.1.0 --registry=https://npm.pkg.github.com
     - name: Unlock via the repo's own published recovery file + code
       shell: bash
       run: |

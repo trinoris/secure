@@ -255,8 +255,13 @@ securegit unlock
 
 ## Install
 
-Not yet published to a package registry (no tagged release exists yet —
-see `.github/workflows/release.yml`). For now, build from source:
+After the first npmjs.com release, install the SecureGit CLI with:
+
+```sh
+npm install --global @trinoris/securegit
+```
+
+Until then, or to build directly from this repository:
 
 ```sh
 git clone git@github.com:trinoris/secure.git
@@ -273,15 +278,19 @@ Once a `v*` tag is pushed, the release workflow runs the guarded
 [`scripts/release.sh`](scripts/release.sh) process. It validates package manifests and
 the lockfile, installs with lifecycle scripts disabled, audits dependencies, builds and
 type-checks every package, runs the full unit, coverage, and integration suites, and then
-publishes only package versions not already present in GitHub Packages. The Git tag must
+publishes only package versions not already present in the npm registry. The Git tag must
 match SecureGit's version when one is supplied; direct runs can omit the tag and use the
 versions in each package manifest. `securelib` and the two hardware-provider packages can
 advance independently. The release publishes each package's manifest version only if that
 exact version is not already present. `npm run release:dry` runs the same gates and
-rehearses publication without publishing. Releases publish to the `@trinoris` scope — install with an `.npmrc` pointing
-that scope at `https://npm.pkg.github.com`. The dry run needs a `NODE_AUTH_TOKEN` with
-GitHub Packages read access to check exact versions; publishing also needs write access.
-CI supplies the repository's `GITHUB_TOKEN` for both.
+rehearses publication without publishing. Scoped packages are published with public
+visibility. Public registry lookups need no credential; publishing requires an npm
+granular access token with write access to the `@trinoris` packages (and 2FA bypass if
+required by the npm account), supplied locally as `NODE_AUTH_TOKEN` or in CI as the
+`NPM_TOKEN` repository secret. `GITHUB_TOKEN` remains limited to the GitHub Release and
+the CI source-decryption bootstrap. That bootstrap intentionally installs the previously
+published SecureGit CLI from GitHub Packages: CI needs a prebuilt CLI to decrypt the source
+before it can build the current checkout. This is separate from the public npmjs.com releases.
 
 ## Why this, and not `git-crypt` / SOPS / `age`
 
