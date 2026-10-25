@@ -4,6 +4,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # This is a first-party workspace package. Its compatibility range is
+      # changed deliberately alongside securelib releases, not by dependency
+      # automation in each consumer package.
+      - dependency-name: "@trinoris/securelib"
     groups:
       # vitest and @vitest/coverage-v8 must move together — the coverage
       # package's own major version has to match vitest's, not just be
@@ -17,6 +22,12 @@ updates:
         patterns:
           - "vitest"
           - "@vitest/*"
+      # These versions are shared across the workspace; update them in one PR
+      # and run the full workspace gates once.
+      shared-typescript-toolchain:
+        patterns:
+          - "@types/node"
+          - "typescript"
 
   # Keeps the third-party Actions this repo now depends on (checkout,
   # setup-node, codeql-action, deploy-pages, gitleaks-action, ...) pinned

@@ -269,9 +269,19 @@ npm link --workspace=packages/securegit  # puts `securegit` on your PATH,
                                           # directly
 ```
 
-Once a `v*` tag is pushed, releases publish to GitHub Packages under the
-`@trinoris` scope — install with an `.npmrc` pointing that scope at
-`https://npm.pkg.github.com`.
+Once a `v*` tag is pushed, the release workflow runs the guarded
+[`scripts/release.sh`](scripts/release.sh) process. It validates package manifests and
+the lockfile, installs with lifecycle scripts disabled, audits dependencies, builds and
+type-checks every package, runs the full unit, coverage, and integration suites, and then
+publishes only package versions not already present in GitHub Packages. The Git tag must
+match SecureGit's version when one is supplied; direct runs can omit the tag and use the
+versions in each package manifest. `securelib` and the two hardware-provider packages can
+advance independently. The release publishes each package's manifest version only if that
+exact version is not already present. `npm run release:dry` runs the same gates and
+rehearses publication without publishing. Releases publish to the `@trinoris` scope — install with an `.npmrc` pointing
+that scope at `https://npm.pkg.github.com`. The dry run needs a `NODE_AUTH_TOKEN` with
+GitHub Packages read access to check exact versions; publishing also needs write access.
+CI supplies the repository's `GITHUB_TOKEN` for both.
 
 ## Why this, and not `git-crypt` / SOPS / `age`
 
