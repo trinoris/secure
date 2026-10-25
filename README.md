@@ -284,13 +284,19 @@ versions in each package manifest. `securelib` and the two hardware-provider pac
 advance independently. The release publishes each package's manifest version only if that
 exact version is not already present. `npm run release:dry` runs the same gates and
 rehearses publication without publishing. Scoped packages are published with public
-visibility. Public registry lookups need no credential; publishing requires an npm
-granular access token with write access to the `@trinoris` packages (and 2FA bypass if
-required by the npm account), supplied locally as `NODE_AUTH_TOKEN` or in CI as the
-`NPM_TOKEN` repository secret. `GITHUB_TOKEN` remains limited to the GitHub Release and
-the CI source-decryption bootstrap. That bootstrap intentionally installs the previously
-published SecureGit CLI from GitHub Packages: CI needs a prebuilt CLI to decrypt the source
-before it can build the current checkout. This is separate from the public npmjs.com releases.
+visibility. Public registry lookups need no credential. GitHub Actions publishes through
+npm trusted publishing (OIDC), with no npm token secret; set up the trusted publisher for
+each npm package using organization `trinoris`, repository `secure`, and workflow
+`release.yml`, allowing direct `npm publish`. For a package's first npmjs.com release,
+publish it manually, then add the trusted publisher in that package's npm settings; later
+Actions releases use OIDC without an npm token. The release runner uses Node 24 with npm
+11.5.1 or later for OIDC support. For local releases, authenticate with `npm login --registry
+https://registry.npmjs.org` or put `NODE_AUTH_TOKEN` in the ignored `.env` file. The script
+uses a temporary npm config for that token and removes it on exit. `GITHUB_TOKEN` remains limited to
+the GitHub Release and the CI source-decryption bootstrap. That bootstrap intentionally
+installs the previously published SecureGit CLI from GitHub Packages: CI needs a prebuilt
+CLI to decrypt the source before it can build the current checkout. This is separate from
+the public npmjs.com releases.
 
 ## Why this, and not `git-crypt` / SOPS / `age`
 
