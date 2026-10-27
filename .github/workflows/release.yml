@@ -12,7 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: write
+      packages: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v7
@@ -28,9 +29,9 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '22.x'
+          node-version: '24.x'
           cache: 'npm'
-          registry-url: 'https://npm.pkg.github.com'
+          registry-url: 'https://registry.npmjs.org'
           scope: '@trinoris'
 
       # Decrypt the real source before validating or building the release.
@@ -38,8 +39,6 @@ jobs:
 
       - name: Run release gates and publish new package versions
         run: bash scripts/release.sh --tag "$GITHUB_REF_NAME"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create GitHub Release
         env:

@@ -13,7 +13,7 @@
     "securegit": "./dist/bin/securegit.js"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://registry.npmjs.org"
   },
   "exports": {
     ".": {

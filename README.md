@@ -246,17 +246,98 @@ securegit protect config/production.json
 git add . && git commit -m "hello" && git push
 ```
 
-On a second machine that already holds a key for this repository:
+## Clone and open an encrypted repository
+
+A clone can be fetched without a key. Protected files remain ciphertext
+until you install SecureGit in that clone and obtain authorized key
+access. Git hosting never receives the plaintext.
 
 ```sh
-git clone …
+git clone <repository-url>
+cd <repository-directory>
+securegit install
+```
+
+Choose the access path that applies to you:
+
+### You already have a local key for this repository
+
+For example, you are cloning on a machine where you previously set up
+SecureGit for this repository:
+
+```sh
 securegit unlock
 ```
 
+### You are joining from a new machine
+
+Ask an existing repository member to grant recipient access. First create
+an identity on your machine and send its **public** key to that member:
+
+```sh
+securegit identity init
+securegit identity show
+```
+
+The existing member adds that public key and pushes the recipient update:
+
+```sh
+securegit key add-recipient <your-public-key> --label <your-name>
+git status --short
+git add .securegit/recipients/<your-fingerprint>.json
+git commit -m "Add SecureGit repository recipient"
+git push
+```
+
+Fetch the update, then unlock with your identity:
+
+```sh
+git pull
+securegit unlock
+```
+
+### You are restoring from a recovery export
+
+Obtain the recovery export and its code through separate private channels.
+Then import the export; SecureGit will prompt for the recovery code and a
+new local passphrase:
+
+```sh
+securegit key import-recovery --in /safe/location/repository.recovery.txt
+securegit unlock
+```
+
+### Make the files readable in this clone
+
+If this clone was checked out before SecureGit was installed and unlocked,
+Git may consider its ciphertext checkout current and skip the smudge filter.
+On a **fresh clone with no local changes**, refresh the checkout once:
+
+```sh
+git rm --cached -r -q . && git checkout HEAD -- .
+```
+
+Confirm the result before editing:
+
+```sh
+securegit verify
+git status --short
+```
+
+Afterward, use normal Git commands. Keep the private keyring and recovery
+material out of the repository; share only your public identity key when
+requesting recipient access. For the complete setup and migration guide,
+see [HOWTO.md](HOWTO.md) and the [CLI guide](docs/securegit/05-cli-guide.md).
+
 ## Install
 
-Not yet published to a package registry (no tagged release exists yet —
-see `.github/workflows/release.yml`). For now, build from source:
+After the first npmjs.com release, install the SecureGit CLI with:
+
+```sh
+npm install --global @trinoris/securegit
+```
+
+Until then, or to build directly from this repository:
 
 ```sh
 git clone git@github.com:trinoris/secure.git
@@ -273,15 +354,25 @@ Once a `v*` tag is pushed, the release workflow runs the guarded
 [`scripts/release.sh`](scripts/release.sh) process. It validates package manifests and
 the lockfile, installs with lifecycle scripts disabled, audits dependencies, builds and
 type-checks every package, runs the full unit, coverage, and integration suites, and then
-publishes only package versions not already present in GitHub Packages. The Git tag must
+publishes only package versions not already present in the npm registry. The Git tag must
 match SecureGit's version when one is supplied; direct runs can omit the tag and use the
 versions in each package manifest. `securelib` and the two hardware-provider packages can
 advance independently. The release publishes each package's manifest version only if that
 exact version is not already present. `npm run release:dry` runs the same gates and
-rehearses publication without publishing. Releases publish to the `@trinoris` scope — install with an `.npmrc` pointing
-that scope at `https://npm.pkg.github.com`. The dry run needs a `NODE_AUTH_TOKEN` with
-GitHub Packages read access to check exact versions; publishing also needs write access.
-CI supplies the repository's `GITHUB_TOKEN` for both.
+rehearses publication without publishing. Scoped packages are published with public
+visibility. Public registry lookups need no credential. GitHub Actions publishes through
+npm trusted publishing (OIDC), with no npm token secret; set up the trusted publisher for
+each npm package using organization `trinoris`, repository `secure`, and workflow
+`release.yml`, allowing direct `npm publish`. For a package's first npmjs.com release,
+publish it manually, then add the trusted publisher in that package's npm settings; later
+Actions releases use OIDC without an npm token. The release runner uses Node 24 with npm
+11.5.1 or later for OIDC support. For local releases, authenticate with `npm login --registry
+https://registry.npmjs.org` or put `NODE_AUTH_TOKEN` in the ignored `.env` file. The script
+uses a temporary npm config for that token and removes it on exit. `GITHUB_TOKEN` remains limited to
+the GitHub Release and the CI source-decryption bootstrap. That bootstrap intentionally
+installs the previously published SecureGit CLI from GitHub Packages: CI needs a prebuilt
+CLI to decrypt the source before it can build the current checkout. This is separate from
+the public npmjs.com releases.
 
 ## Why this, and not `git-crypt` / SOPS / `age`
 
