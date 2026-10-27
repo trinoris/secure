@@ -246,12 +246,88 @@ securegit protect config/production.json
 git add . && git commit -m "hello" && git push
 ```
 
-On a second machine that already holds a key for this repository:
+## Clone and open an encrypted repository
+
+A clone can be fetched without a key. Protected files remain ciphertext
+until you install SecureGit in that clone and obtain authorized key
+access. Git hosting never receives the plaintext.
 
 ```sh
-git clone …
+git clone <repository-url>
+cd <repository-directory>
+securegit install
+```
+
+Choose the access path that applies to you:
+
+### You already have a local key for this repository
+
+For example, you are cloning on a machine where you previously set up
+SecureGit for this repository:
+
+```sh
 securegit unlock
 ```
+
+### You are joining from a new machine
+
+Ask an existing repository member to grant recipient access. First create
+an identity on your machine and send its **public** key to that member:
+
+```sh
+securegit identity init
+securegit identity show
+```
+
+The existing member adds that public key and pushes the recipient update:
+
+```sh
+securegit key add-recipient <your-public-key> --label <your-name>
+git status --short
+git add .securegit/recipients/<your-fingerprint>.json
+git commit -m "Add SecureGit repository recipient"
+git push
+```
+
+Fetch the update, then unlock with your identity:
+
+```sh
+git pull
+securegit unlock
+```
+
+### You are restoring from a recovery export
+
+Obtain the recovery export and its code through separate private channels.
+Then import the export; SecureGit will prompt for the recovery code and a
+new local passphrase:
+
+```sh
+securegit key import-recovery --in /safe/location/repository.recovery.txt
+securegit unlock
+```
+
+### Make the files readable in this clone
+
+If this clone was checked out before SecureGit was installed and unlocked,
+Git may consider its ciphertext checkout current and skip the smudge filter.
+On a **fresh clone with no local changes**, refresh the checkout once:
+
+```sh
+git rm --cached -r -q . && git checkout HEAD -- .
+```
+
+Confirm the result before editing:
+
+```sh
+securegit verify
+git status --short
+```
+
+Afterward, use normal Git commands. Keep the private keyring and recovery
+material out of the repository; share only your public identity key when
+requesting recipient access. For the complete setup and migration guide,
+see [HOWTO.md](HOWTO.md) and the [CLI guide](docs/securegit/05-cli-guide.md).
 
 ## Install
 
